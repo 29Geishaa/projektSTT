@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel Transkrypcji STT</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .app-container {
+            background-color: #262626;
+            width: 100%;
+            max-width: 1000px;
+            height: 90vh;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid #333;
+        }
+        .header {
+            padding: 20px 30px;
+            border-bottom: 1px solid #333;
+            background-color: #2d2d2d;
+        }
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 30px;
+            gap: 20px;
+            overflow-y: auto;
+        }
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+            background-color: #2d2d2d;
+            padding: 15px 20px;
+            border-radius: 8px;
+            border: 1px solid #383838;
+        }
+        .tool-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        label {
+            font-size: 14px;
+            color: #aaa;
+        }
+        select, input[type="file"] {
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            cursor: pointer;
+        }
+        select:focus {
+            border-color: #007bff;
+        }
+        .btn {
+            padding: 9px 18px;
+            font-size: 14px;
+            font-weight: 500;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s, opacity 0.2s;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover {
+            background-color: #bd2130;
+        }
+        .btn-secondary {
+            background-color: #444;
+            color: #e0e0e0;
+        }
+        .btn-secondary:hover {
+            background-color: #555;
+        }
+        .btn:disabled {
+            background-color: #333;
+            color: #777;
+            cursor: not-allowed;
+        }
+        .visualizer-container {
+            height: 60px;
+            background-color: #1a1a1a;
+            border-radius: 8px;
+            border: 1px solid #333;
+            overflow: hidden;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .status-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: #aaa;
+        }
+        .spinner {
+            display: none;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #555;
+            border-top: 2px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .result-box {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .result-box h3 {
+            font-size: 14px;
+            color: #aaa;
+            font-weight: 500;
+        }
+        textarea {
+            flex: 1;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 20px;
+            font-size: 15px;
+            line-height: 1.6;
+            resize: none;
+            outline: none;
+            font-family: inherit;
+        }
+        textarea:focus {
+            border-color: #444;
+        }
+        .divider {
+            border-left: 1px solid #444;
+            height: 25px;
+            margin: 0 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="app-container">
+        <div class="header">
+            <h1>Zaawansowany Panel Transkrypcji Speech-to-Text</h1>
+        </div>
+        
+        <div class="main-content">
+            <div class="toolbar">
+                <div class="tool-group">
+                    <label for="modelSelect">Model:</label>
+                    <select id="modelSelect">
+                        <option value="tiny">Tiny (Szybki)</option>
+                        <option value="base" selected>Base (Zrównoważony)</option>
+                        <option value="small">Small (Dokładny)</option>
+                    </select>
+                </div>
+                
+                <div class="divider"></div>
+
+                <div class="tool-group">
+                    <label for="languageSelect">Język:</label>
+                    <select id="languageSelect">
+                        <option value="auto" selected>Auto-detekcja</option>
+                        <option value="pl">Polski</option>
+                        <option value="en">Angielski</option>
+                        <option value="de">Niemiecki</option>
+                        <option value="es">Hiszpański</option>
+                    </select>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="tool-group">
+                    <label for="taskSelect">Zadanie:</label>
+                    <select id="taskSelect">
+                        <option value="transcribe" selected>Transkrypcja</option>
+                        <option value="translate">Tłumaczenie (-> EN)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="toolbar">
+                <div class="tool-group">
+                    <button id="startBtn" class="btn btn-primary">Nagraj</button>
+                    <button id="stopBtn" class="btn btn-danger" disabled>Stop</button>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="tool-group">
+                    <input type="file" id="fileInput" accept="audio/*">
+                    <button id="uploadBtn" class="btn btn-secondary">Prześlij plik</button>
+                </div>
+
+                <div style="margin-left: auto;" class="status-container">
+                    <div id="spinner" class="spinner"></div>
+                    <span id="status">Gotowy</span>
+                </div>
+            </div>
+
+            <div class="visualizer-container">
+                <canvas id="visualizer"></canvas>
+            </div>
+
+            <div class="result-box">
+                <h3>Wynik operacji</h3>
+                <textarea id="result" readonly placeholder="Tutaj pojawi się przetłumaczony tekst..."></textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioCtx;
+        let analyser;
+        let animationId;
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileInput = document.getElementById('fileInput');
+        const status = document.getElementById('status');
+        const spinner = document.getElementById('spinner');
+        const resultTextarea = document.getElementById('result');
+        const modelSelect = document.getElementById('modelSelect');
+        const languageSelect = document.getElementById('languageSelect');
+        const taskSelect = document.getElementById('taskSelect');
+        const canvas = document.getElementById('visualizer');
+        const canvasCtx = canvas.getContext('2d');
+
+        function setStatus(text, isLoading = false) {
+            status.textContent = text;
+            spinner.style.display = isLoading ? 'block' : 'none';
+        }
+
+        function resizeCanvas() {
+            canvas.width = canvas.parentNode.clientWidth;
+            canvas.height = canvas.parentNode.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function drawVisualizer() {
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            const draw = () => {
+                animationId = requestAnimationFrame(draw);
+                analyser.getByteFrequencyData(dataArray);
+
+                canvasCtx.fillStyle = '#1a1a1a';
+                canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const barWidth = (canvas.width / bufferLength) * 2.5;
+                let barHeight;
+                let x = 0;
+
+                for (let i = 0; i < bufferLength; i++) {
+                    barHeight = dataArray[i] / 2;
+                    canvasCtx.fillStyle = `rgb(${barHeight + 50}, 123, 255)`;
+                    canvasCtx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+                    x += barWidth;
+                }
+            };
+            draw();
+        }
+
+        startBtn.addEventListener('click', async () => {
+            audioChunks = [];
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioCtx.createAnalyser();
+                const source = audioCtx.createMediaStreamSource(stream);
+                source.connect(analyser);
+                analyser.fftSize = 64;
+                
+                drawVisualizer();
+
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    await sendAudio(audioBlob, 'recording.wav');
+                };
+
+                mediaRecorder.start();
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                setStatus("Nagrywanie dźwięku...", false);
+            } catch (err) {
+                alert("Brak dostępu do mikrofonu lub błąd urządzenia.");
+            }
+        });
+
+        stopBtn.addEventListener('click', () => {
+            mediaRecorder.stop();
+            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            
+            if (audioCtx) {
+                audioCtx.close();
+            }
+            cancelAnimationFrame(animationId);
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            setStatus("Przetwarzanie nagrania...", true);
+        });
+
+        uploadBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Wybierz plik audio przed wysłaniem!');
+                return;
+            }
+            await sendAudio(file, file.name);
+        });
+
+        async function sendAudio(blob, filename) {
+            const formData = new FormData();
+            formData.append('file', blob, filename);
+            formData.append('model_name', modelSelect.value);
+            formData.append('language', languageSelect.value);
+            formData.append('task', taskSelect.value);
+
+            setStatus("Wysyłanie i analiza STT...", true);
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            
+            try {
+                const response = await fetch('http://127.0.0.1:8000/transcribe', {
+                    method: 'POST',
+                    body: formData,
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                const data = await response.json();
+                
+                if (data.text) {
+                    const langInfo = data.language ? ` | Język: ${data.language}` : '';
+                    const taskInfo = data.task === 'translate' ? ' | Tłumaczenie' : ' | Transkrypcja';
+                    resultTextarea.value = `[Model: ${data.model_used}${langInfo}${taskInfo}]\n\n${data.text.trim()}`;
+                } else {
+                    resultTextarea.value = "Błąd serwera: " + JSON.stringify(data);
+                }
+            } catch (error) {
+                clearTimeout(timeoutId);
+                if (error.name === 'AbortError') {
+                    resultTextarea.value = "BŁĄD POŁĄCZENIA: Brak odpowiedzi ze strony serwera (Timeout).\n\nUpewnij się, że serwer FastAPI (main.py) jest włączony i działa na porcie 8000.";
+                } else {
+                    resultTextarea.value = "BŁĄD POŁĄCZENIA Z SERWEREM!\n\nSerwer backendu FastAPI (main.py) nie odpowiada.\nUpewnij się, że uruchomiłeś go w terminalu komendą: python3 main.py";
+                }
+            } finally {
+                setStatus("Gotowy", false);
+            }
+        }
+    </script>
+</body>
+</html>
