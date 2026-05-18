@@ -4,3 +4,5 @@ __pycache__/
 temp_*
 venv
 .env
+users.db
+temp_uploads

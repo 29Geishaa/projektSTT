@@ -32,6 +32,31 @@
             overflow: hidden;
             border: 1px solid #333;
         }
+        .user-bar {
+            background-color: #202020;
+            padding: 10px 30px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+            color: #aaa;
+        }
+        .user-bar a {
+            color: #007bff;
+            text-decoration: none;
+            margin-left: 15px;
+            transition: color 0.2s;
+        }
+        .user-bar a:hover {
+            color: #0056b3;
+        }
+        .user-bar a.logout-link {
+            color: #dc3545;
+        }
+        .user-bar a.logout-link:hover {
+            color: #bd2130;
+        }
         .header {
             padding: 20px 30px;
             border-bottom: 1px solid #333;
@@ -186,6 +211,14 @@
 <body>
 
     <div class="app-container">
+        <div class="user-bar">
+            <div>Zalogowany jako: <strong>{{ user.first_name }} {{ user.last_name }}</strong> ({{ user.email }})</div>
+            <div>
+                <a href="{{ url_for('change_password') }}">Zmiana hasła</a>
+                <a href="{{ url_for('logout') }}" class="logout-link">Wyloguj się</a>
+            </div>
+        </div>
+
         <div class="header">
             <h1>Zaawansowany Panel Transkrypcji Speech-to-Text</h1>
         </div>
@@ -377,17 +410,12 @@
 
             setStatus("Wysyłanie i analiza STT...", true);
             
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-            
             try {
-                const response = await fetch('http://127.0.0.1:8000/transcribe', {
+                const response = await fetch('/transcribe', {
                     method: 'POST',
-                    body: formData,
-                    signal: controller.signal
+                    body: formData
                 });
                 
-                clearTimeout(timeoutId);
                 const data = await response.json();
                 
                 if (data.text) {
@@ -395,15 +423,10 @@
                     const taskInfo = data.task === 'translate' ? ' | Tłumaczenie' : ' | Transkrypcja';
                     resultTextarea.value = `[Model: ${data.model_used}${langInfo}${taskInfo}]\n\n${data.text.trim()}`;
                 } else {
-                    resultTextarea.value = "Błąd serwera: " + JSON.stringify(data);
+                    resultTextarea.value = "Błąd serwera: " + (data.error || JSON.stringify(data));
                 }
             } catch (error) {
-                clearTimeout(timeoutId);
-                if (error.name === 'AbortError') {
-                    resultTextarea.value = "BŁĄD POŁĄCZENIA: Brak odpowiedzi ze strony serwera (Timeout).\n\nUpewnij się, że serwer FastAPI (main.py) jest włączony i działa na porcie 8000.";
-                } else {
-                    resultTextarea.value = "BŁĄD POŁĄCZENIA Z SERWEREM!\n\nSerwer backendu FastAPI (main.py) nie odpowiada.\nUpewnij się, że uruchomiłeś go w terminalu komendą: python3 main.py";
-                }
+                resultTextarea.value = "BŁĄD POŁĄCZENIA Z SERWEREM!\n\nSerwer backendu Flask (app.py) nie odpowiada lub wystąpił błąd przetwarzania.\nUpewnij się, że uruchomiłeś go w terminalu komendą: python app.py";
             } finally {
                 setStatus("Gotowy", false);
             }
