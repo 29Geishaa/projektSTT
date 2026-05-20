@@ -23,7 +23,7 @@
         .app-container {
             background-color: #262626;
             width: 100%;
-            max-width: 1000px;
+            max-width: 1100px;
             height: 90vh;
             border-radius: 12px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
@@ -174,6 +174,12 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .results-wrapper {
+            flex: 1;
+            display: flex;
+            gap: 20px;
+            min-height: 250px;
+        }
         .result-box {
             flex: 1;
             display: flex;
@@ -200,6 +206,10 @@
         }
         textarea:focus {
             border-color: #444;
+        }
+        textarea.ai-notes-area {
+            border-color: #2b4c7e;
+            background-color: #16222f;
         }
         .divider {
             border-left: 1px solid #444;
@@ -281,9 +291,16 @@
                 <canvas id="visualizer"></canvas>
             </div>
 
-            <div class="result-box">
-                <h3>Wynik operacji</h3>
-                <textarea id="result" readonly placeholder="Tutaj pojawi się przetłumaczony tekst..."></textarea>
+            <div class="results-wrapper">
+                <div class="result-box">
+                    <h3>✨ Podsumowanie i Notatki AI (Llama 3)</h3>
+                    <textarea id="aiNotes" class="ai-notes-area" readonly placeholder="Tutaj pojawi się ustrukturyzowana notatka z nagrania stworzona przez AI..."></textarea>
+                </div>
+                
+                <div class="result-box">
+                    <h3>📝 Pełna Transkrypcja (Surowy tekst)</h3>
+                    <textarea id="result" readonly placeholder="Tutaj pojawi się pełny, surowy tekst z nagrania..."></textarea>
+                </div>
             </div>
         </div>
     </div>
@@ -302,6 +319,7 @@
         const status = document.getElementById('status');
         const spinner = document.getElementById('spinner');
         const resultTextarea = document.getElementById('result');
+        const aiNotesTextarea = document.getElementById('aiNotes');
         const modelSelect = document.getElementById('modelSelect');
         const languageSelect = document.getElementById('languageSelect');
         const taskSelect = document.getElementById('taskSelect');
@@ -408,7 +426,9 @@
             formData.append('language', languageSelect.value);
             formData.append('task', taskSelect.value);
 
-            setStatus("Wysyłanie i analiza STT...", true);
+            setStatus("Wysyłanie i analiza STT + AI...", true);
+            resultTextarea.value = "";
+            aiNotesTextarea.value = "";
             
             try {
                 const response = await fetch('/transcribe', {
@@ -421,12 +441,16 @@
                 if (data.text) {
                     const langInfo = data.language ? ` | Język: ${data.language}` : '';
                     const taskInfo = data.task === 'translate' ? ' | Tłumaczenie' : ' | Transkrypcja';
+                    
                     resultTextarea.value = `[Model: ${data.model_used}${langInfo}${taskInfo}]\n\n${data.text.trim()}`;
+                    aiNotesTextarea.value = data.notes ? data.notes.trim() : "Model AI nie zwrócił analizy.";
                 } else {
                     resultTextarea.value = "Błąd serwera: " + (data.error || JSON.stringify(data));
+                    aiNotesTextarea.value = "Nie można wygenerować notatek z powodu błędu.";
                 }
             } catch (error) {
-                resultTextarea.value = "BŁĄD POŁĄCZENIA Z SERWEREM!\n\nSerwer backendu Flask (app.py) nie odpowiada lub wystąpił błąd przetwarzania.\nUpewnij się, że uruchomiłeś go w terminalu komendą: python app.py";
+                resultTextarea.value = "BŁĄD POŁĄCZENIA Z SERWEREM!\n\nSerwer backendu Flask (app.py) nie odpowiada lub wystąpił błąd przetwarzania.";
+                aiNotesTextarea.value = "Brak połączenia.";
             } finally {
                 setStatus("Gotowy", false);
             }

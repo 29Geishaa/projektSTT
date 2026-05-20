@@ -3,6 +3,7 @@ import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import whisper
+import ollama
 
 app = Flask(__name__)
 app.secret_key = 'super-tajny-klucz-do-sesji-praktyki'
@@ -13,7 +14,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 DB_FILE = 'users.db'
 
 def init_db():
-    """Tworzy plik bazy danych i tabelę, jeśli jeszcze nie istnieją."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -27,7 +27,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Inicjalizacja bazy danych przy starcie aplikacji
 init_db()
 
 print("Ładowanie modeli Whisper...")
@@ -46,7 +45,6 @@ def login():
         email = request.form.get('email')
         password = request.form.get('password')
         
-        # Pobieranie użytkownika z bazy SQLite
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("SELECT email, first_name, last_name, password_hash FROM users WHERE email = ?", (email,))
@@ -143,14 +141,43 @@ def transcribe():
             options["language"] = language
             
         result = model.transcribe(file_path, **options)
+        surowy_tekst = result["text"]
+        
         os.remove(file_path)
         
+        notatki_ai = ""
+        if surowy_tekst.strip():
+            print("Generowanie notatek AI przez Ollama (Llama 3)...")
+            prompt = f"""
+Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst pochodzący z nagrania audio i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.
+Notatka MUSI składać się z trzech wyraźnych sekcji:
+1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję nagrania).
+2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje i wątki wypisane od myślników).
+3. LISTA ZADAŃ DO WYKONANIA (zadania i akcje do podjęcia, jeśli o nich wspomniano).
+
+Oto tekst do przeanalizowania:
+{surowy_tekst}
+"""
+            try:
+                response = ollama.chat(model='llama3', messages=[
+                    {
+                        'role': 'user',
+                        'content': prompt,
+                    },
+                ])
+                notatki_ai = response['message']['content']
+            except Exception as ollama_err:
+                print(f"Błąd Ollamy: {ollama_err}")
+                notatki_ai = "Nie udało się wygenerować notatek AI. Upewnij się, że Ollama działa w tle."
+
         return jsonify({
-            "text": result["text"], 
+            "text": surowy_tekst, 
+            "notes": notatki_ai,
             "model_used": model_name,
             "language": result.get("language", language),
             "task": task
         })
+        
     except Exception as e:
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -197,4 +224,4 @@ def logout():
     return redirect(url_for('login'))
 
 if __name__ == '__main__':
-    app.run(debug=True, host='25.19.183.63', port=8000)
+    app.run(debug=True, host='0.0.0.0', port=8000)
