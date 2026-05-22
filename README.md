@@ -21,11 +21,8 @@ Klonujemy projekt, tworzymy wirtualne środowisko Pythona (**`venv`**) i je akty
 
 ```
 git clone [https://github.com/29Geishaa/projektSTT.git](https://github.com/29Geishaa/projektSTT.git)
-<br>
 cd projektSTT
-<br>
 python3 -m venv venv
-<br>
 source venv/bin/activate
 ```
 
