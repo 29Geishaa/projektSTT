@@ -26,7 +26,8 @@
         <input type="text" name="last_name" required><br><br>
         
         <label>Hasło:</label><br>
-        <input type="password" name="password" required><br><br>
+        <input type="password" name="password" minlength="8" pattern="(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?\x22:{}|<>]).{8,}" required><br>
+        <small style="color: gray;">Hasło musi mieć min. 8 znaków, zawierać dużą literę, cyfrę oraz znak specjalny.</small><br><br>
         
         <button type="submit">Zarejestruj się</button>
     </form>
