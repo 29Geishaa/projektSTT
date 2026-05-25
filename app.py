@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import re  # Import modułu do walidacji e-maila i hasła
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import whisper
@@ -70,6 +71,26 @@ def register():
         first_name = request.form.get('first_name')
         last_name = request.form.get('last_name')
         password = request.form.get('password')
+        
+        # 1. Walidacja formatu e-maila (musi mieć @ i domenę po kropce)
+        email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_regex, email):
+            flash('Podaj poprawny adres e-mail (np. nazwa@domena.pl).', 'danger')
+            return render_template('rejestracja.html')
+            
+        # 2. Walidacja siły hasła (min. 8 znaków, duża litera, cyfra, znak specjalny)
+        if len(password) < 8:
+            flash('Hasło musi mieć co najmniej 8 znaków.', 'danger')
+            return render_template('rejestracja.html')
+        if not any(char.isupper() for char in password):
+            flash('Hasło musi zawierać co najmniej jedną wielką literę.', 'danger')
+            return render_template('rejestracja.html')
+        if not any(char.isdigit() for char in password):
+            flash('Hasło musi zawierać co najmniej jedną cyfrę.', 'danger')
+            return render_template('rejestracja.html')
+        if not any(char in '!@#$%^&*(),.?":{}|<>' for char in password):
+            flash('Hasło musi zawierać co najmniej jeden znak specjalny (np. !, @, #, $).', 'danger')
+            return render_template('rejestracja.html')
         
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
