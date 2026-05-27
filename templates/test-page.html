@@ -25,7 +25,7 @@
             background-color: #262626;
             width: 100%;
             max-width: 1100px;
-            height: 90vh;
+            height: 95vh;
             border-radius: 12px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
             display: flex;
@@ -111,10 +111,28 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            flex: 0 0 auto; /* Zapobiega ściskaniu i nakładaniu */
+        }
+        .tool-group:last-of-type {
+            flex: 1 1 300px; /* YouTube rozciągnie się, jeśli ma miejsce */
+        }
+        .tool-group-input {
+            width: 100%;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+        }
+        .tool-group-input:focus {
+            border-color: #dc3545;
         }
         label {
             font-size: 14px;
             color: #aaa;
+            white-space: nowrap;
         }
         select, input[type="file"] {
             background-color: #1a1a1a;
@@ -137,6 +155,7 @@
             border-radius: 6px;
             cursor: pointer;
             transition: background-color 0.2s, opacity 0.2s;
+            white-space: nowrap;
         }
         .btn-primary {
             background-color: #007bff;
@@ -254,6 +273,51 @@
             border-color: #2b4c7e;
             background-color: #16222f;
         }
+        
+        .chat-section {
+            background-color: #2d2d2d;
+            border: 1px solid #383838;
+            border-radius: 8px;
+            padding: 15px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .chat-header h4 {
+            font-size: 14px;
+            color: #ffc107;
+            font-weight: 600;
+        }
+        .chat-input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+        .chat-input {
+            flex: 1;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+        }
+        .chat-input:focus {
+            border-color: #ffc107;
+        }
+        .chat-response-box {
+            display: none;
+            background-color: #1a1a1a;
+            border-left: 3px solid #ffc107;
+            border-radius: 4px;
+            padding: 12px 16px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #e0e0e0;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
         .divider {
             border-left: 1px solid #444;
             height: 25px;
@@ -352,7 +416,6 @@
             background-color: rgba(220, 53, 69, 0.2);
         }
 
-        /* DODATEK CSS DLA NOWOCZESNEGO SWITCHA ONLINE/OFFLINE */
         .switch-container {
             display: flex;
             align-items: center;
@@ -487,8 +550,16 @@
                 <div class="divider"></div>
 
                 <div class="tool-group">
-                    <input type="file" id="fileInput" accept="audio/*">
+                    <input type="file" id="fileInput" accept="audio/*,.txt">
                     <button id="uploadBtn" class="btn btn-secondary">Prześlij plik</button>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="tool-group">
+                    <label for="ytUrlInput" style="color: #ff3333;">YouTube URL:</label>
+                    <input type="url" id="ytUrlInput" class="tool-group-input" placeholder="https://www.youtube.com/watch?v=...">
+                    <button id="ytProcessBtn" class="btn btn-danger" style="background-color: #cc1818;">Przetwórz YT</button>
                 </div>
 
                 <div style="margin-left: auto;" class="status-container">
@@ -526,6 +597,17 @@
                     <textarea id="result" readonly placeholder="Tutaj pojawi się pełny, surowy tekst z nagrania..."></textarea>
                 </div>
             </div>
+
+            <div class="chat-section">
+                <div class="chat-header">
+                    <h4>🤖 Zadaj pytanie do tego nagrania / tekstu</h4>
+                </div>
+                <div class="chat-input-wrapper">
+                    <input type="text" id="chatInput" class="chat-input" placeholder="np. O czym rozmawiali na samym początku? Jakie zadania przydzielono Mariuszowi?" disabled>
+                    <button id="chatSendBtn" class="btn btn-warning" disabled>Zapytaj AI</button>
+                </div>
+                <div id="chatResponse" class="chat-response-box"></div>
+            </div>
         </div>
 
         <div id="historySidebar" class="history-sidebar">
@@ -553,12 +635,15 @@
         let recordStartTime;
         let totalRecordingTime = 0;
         let currentDocumentName = "Transkrypcja"; 
+        let activeRecordId = null;
 
         const startBtn = document.getElementById('startBtn');
         const pauseBtn = document.getElementById('pauseBtn');
         const stopBtn = document.getElementById('stopBtn');
         const uploadBtn = document.getElementById('uploadBtn');
         const fileInput = document.getElementById('fileInput');
+        const ytUrlInput = document.getElementById('ytUrlInput');
+        const ytProcessBtn = document.getElementById('ytProcessBtn');
         const status = document.getElementById('status');
         const spinner = document.getElementById('spinner');
         const resultTextarea = document.getElementById('result');
@@ -569,19 +654,21 @@
         const canvas = document.getElementById('visualizer');
         const canvasCtx = canvas.getContext('2d');
 
+        const chatInput = document.getElementById('chatInput');
+        const chatSendBtn = document.getElementById('chatSendBtn');
+        const chatResponse = document.getElementById('chatResponse');
+
         const historySidebar = document.getElementById('historySidebar');
         const openHistoryBtn = document.getElementById('openHistoryBtn');
         const closeHistoryBtn = document.getElementById('closeHistoryBtn');
         const historyList = document.getElementById('historyList');
         
-        // Elementy sterujące widokiem trybu Online
         const modeSwitch = document.getElementById('modeSwitch');
         const modelSelectGroup = document.getElementById('modelSelectGroup');
         const cloudBadgeGroup = document.getElementById('cloudBadgeGroup');
 
         let cachedHistory = [];
 
-        // Obsługa dynamicznego ukrywania modeli przy przełączaniu trybu
         modeSwitch.addEventListener('change', function() {
             if(this.checked) {
                 modelSelectGroup.style.display = 'none';
@@ -597,12 +684,21 @@
             spinner.style.display = isLoading ? 'block' : 'none';
         }
 
+        function toggleChatAccess(enable) {
+            chatInput.disabled = !enable;
+            chatSendBtn.disabled = !enable;
+            if(!enable) {
+                chatResponse.style.display = 'none';
+                chatResponse.innerHTML = '';
+                chatInput.value = '';
+            }
+        }
+
         function startSmartCountdown(audioDurationSeconds) {
             clearInterval(countdownInterval);
             
-            // Jeśli wybrano tryb Chmury Groq, nie odpalamy długiego licznika lokalnego
             if (modeSwitch.checked) {
-                setStatus("Wysyłanie do chmury Groq... Błyskawiczna analiza", true);
+                setStatus("Wysyłanie danych do chmury Groq... Analiza AI", true);
                 return;
             }
 
@@ -680,6 +776,7 @@
             try {
                 const response = await fetch(`/delete-history/${id}`, { method: 'DELETE' });
                 if (response.ok) {
+                    if(activeRecordId === id) toggleChatAccess(false);
                     await loadHistoryFromServer(); 
                     setStatus("Usunięto nagranie z bazy", false);
                 } else {
@@ -696,6 +793,8 @@
                 currentDocumentName = item.filename; 
                 resultTextarea.value = item.raw_text;
                 aiNotesTextarea.value = item.ai_notes;
+                activeRecordId = item.id; 
+                toggleChatAccess(true);
                 historySidebar.classList.remove('open');
                 setStatus(`Wczytano: ${item.filename}`, false);
             }
@@ -774,6 +873,7 @@
             audioChunks = [];
             totalRecordingTime = 0;
             recordStartTime = Date.now();
+            toggleChatAccess(false);
             
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -849,30 +949,79 @@
         uploadBtn.addEventListener('click', async () => {
             const file = fileInput.files[0];
             if (!file) {
-                alert('Wybierz plik audio przed wysłaniem!');
+                alert('Wybierz plik (audio lub .txt) przed wysłaniem!');
                 return;
             }
+            toggleChatAccess(false);
             
             const customName = prompt("Podaj przyjazną nazwę dla tego pliku w historii:", file.name);
             if(customName) currentDocumentName = customName;
             
-            const audioObj = document.createElement('audio');
-            audioObj.src = URL.createObjectURL(file);
-            audioObj.addEventListener('loadedmetadata', () => {
-                startSmartCountdown(audioObj.duration);
+            if (file.name.endsWith('.txt')) {
+                setStatus("Przetwarzanie dokumentu tekstowego przez AI...", true);
                 sendAudio(file, file.name, customName);
-            });
+            } else {
+                const audioObj = document.createElement('audio');
+                audioObj.src = URL.createObjectURL(file);
+                audioObj.addEventListener('loadedmetadata', () => {
+                    startSmartCountdown(audioObj.duration);
+                    sendAudio(file, file.name, customName);
+                });
+            }
         });
 
-        async function sendAudio(blob, filename, customName = "") {
+        ytProcessBtn.addEventListener('click', () => {
+            const ytUrl = ytUrlInput.value.trim();
+            if(!ytUrl) {
+                alert("Wklej poprawny link do filmu z YouTube!");
+                return;
+            }
+            toggleChatAccess(false);
+            
+            const customName = prompt("Podaj nazwę dla projektu YouTube w historii:", "Projekt YouTube");
+            if(customName) currentDocumentName = customName;
+
+            startSmartCountdown(60); 
+            sendAudio(null, '', customName, ytUrl);
+        });
+
+        chatSendBtn.addEventListener('click', async () => {
+            const query = chatInput.value.trim();
+            if(!query || !activeRecordId) return;
+
+            chatSendBtn.disabled = true;
+            chatResponse.style.display = 'block';
+            chatResponse.innerHTML = "<span style='color: #ffc107;'>Generowanie odpowiedzi przez AI...</span>";
+
+            try {
+                const response = await fetch('/ask-question', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id: activeRecordId, question: query })
+                });
+                const data = await response.json();
+                if(data.answer) {
+                    chatResponse.innerHTML = `<strong>Odpowiedź AI:</strong><br>${data.answer.replace(/\n/g, '<br>')}`;
+                } else {
+                    chatResponse.innerHTML = `<span style='color: red;'>Błąd: ${data.error || 'Brak odpowiedzi'}</span>`;
+                }
+            } catch(e) {
+                chatResponse.innerHTML = "<span style='color: red;'>Błąd podczas komunikacji z serwerem.</span>";
+            } finally {
+                chatSendBtn.disabled = false;
+            }
+        });
+
+        async function sendAudio(blob, filename, customName = "", youtubeUrl = "") {
             const formData = new FormData();
-            formData.append('file', blob, filename);
+            if(blob) {
+                formData.append('file', blob, filename);
+            }
             formData.append('model_name', modelSelect.value);
             formData.append('language', languageSelect.value);
             formData.append('task', taskSelect.value);
             formData.append('custom_name', customName);
-            
-            // Wysyłamy stan switcha (online / offline)
+            formData.append('youtube_url', youtubeUrl);
             formData.append('processing_mode', modeSwitch.checked ? 'online' : 'offline');
 
             resultTextarea.value = "";
@@ -889,19 +1038,32 @@
                 if (data.text) {
                     resultTextarea.value = data.text.trim();
                     aiNotesTextarea.value = data.notes ? data.notes.trim() : "Model AI nie zwrócił analizy.";
+                    
+                    if(data.record_id) {
+                        activeRecordId = data.record_id;
+                        toggleChatAccess(true);
+                    } else {
+                        await loadHistoryFromServer();
+                        if(cachedHistory.length > 0) {
+                            activeRecordId = cachedHistory[0].id;
+                            toggleChatAccess(true);
+                        }
+                    }
+
                     if (data.model_used) {
                         setStatus(`Ukończono silnikiem: ${data.model_used}`, false);
+                    } else {
+                        setStatus("Ukończono pomyślnie!", false);
                     }
                 } else {
-                    resultTextarea.value = "Błąd serwera: " + (data.error || JSON.stringify(data));
+                    setStatus(`Błąd serwera: ${data.error || 'Nieznany błąd'}`, false);
+                    alert(data.error || "Wystąpił nieoczekiwany błąd");
                 }
-            } catch (error) {
-                resultTextarea.value = "BŁĄD POŁĄCZENIA Z SERWEREM!";
+            } catch (err) {
+                setStatus("Błąd krytyczny połączenia", false);
+                alert("Błąd podczas wysyłania zapytania na serwer.");
             } finally {
                 stopCountdown();
-                if (status.textContent.indexOf("Ukończono") === -1) {
-                    setStatus("Gotowy", false);
-                }
             }
         }
     </script>

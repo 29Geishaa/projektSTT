@@ -8,6 +8,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import whisper
 import ollama
 from groq import Groq
+import yt_dlp
 
 from docx import Document
 from reportlab.lib.pagesizes import letter
@@ -156,78 +157,126 @@ def transcribe():
     if 'user_email' not in session:
         return jsonify({"error": "Brak autoryzacji"}), 401
         
-    if 'file' not in request.files:
-        return jsonify({"error": "Brak pliku"}), 400
-        
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "Nie wybrano pliku"}), 400
-        
+    youtube_url = request.form.get('youtube_url', '').strip()
     processing_mode = request.form.get('processing_mode', 'offline')
     model_name = request.form.get('model_name', 'base')
     language = request.form.get('language', 'auto')
     task = request.form.get('task', 'transcribe')
-    
     custom_name = request.form.get('custom_name', '').strip()
-    display_title = custom_name if custom_name else file.filename
-        
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(file_path)
     
+    file_path = None
+    display_title = ""
+
     try:
-        if processing_mode == 'online':
-            client = Groq(api_key=GROQ_API_KEY)
-            
-            with open(file_path, "rb") as audio_file:
-                transcription_options = {
-                    "file": (audio_file.name, audio_file.read()),
-                    "model": "whisper-large-v3"
-                }
-                if language != "auto":
-                    transcription_options["language"] = language
+        if youtube_url:
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'outtmpl': os.path.join(UPLOAD_FOLDER, '%(id)s.%(ext)s'),
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'quiet': True
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(youtube_url, download=True)
+                video_id = info.get('id')
+                video_title = info.get('title', 'YouTube Video')
+                file_path = os.path.join(UPLOAD_FOLDER, f"{video_id}.mp3")
+                display_title = custom_name if custom_name else f"YT: {video_title}"
+        else:
+            if 'file' not in request.files:
+                return jsonify({"error": "Brak pliku lub linku YouTube"}), 400
+            file = request.files['file']
+            if file.filename == '':
+                return jsonify({"error": "Nie wybrano pliku"}), 400
                 
-                transcription = client.audio.transcriptions.create(**transcription_options)
-                surowy_tekst = transcription.text
+            file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+            file.save(file_path)
+            display_title = custom_name if custom_name else file.filename
+
+        # Jeśli przesłano gotowy plik tekstowy .txt
+        if file_path.endswith('.txt') and not youtube_url:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                surowy_tekst = f.read()
+            if os.path.exists(file_path):
+                os.remove(file_path)
                 
-            os.remove(file_path)
+            detected_lang = "Plik tekstowy"
+            model_used_info = "Czysty tekst (Brak STT)"
             
-            notatki_ai = ""
-            if surowy_tekst.strip():
-                prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst pochodzący z nagrania audio i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esaimencję nagrania).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje i wątki wypisane od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (zadania i akcje do podjęcia, jeśli o nich wspomniano).\n\nOto tekst do przeanalizowania:\n{surowy_tekst}"
+            # Generowanie notatki AI dla tekstu przez Groq/Ollama
+            prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (akcje do podjęcia).\n\nOto tekst:\n{surowy_tekst}"
+            if processing_mode == 'online':
+                client = Groq(api_key=GROQ_API_KEY)
                 completion = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 notatki_ai = completion.choices[0].message.content
-                
-            detected_lang = language if language != "auto" else "pl"
-            model_used_info = "Groq Cloud (Whisper Large V3)"
-            
-        else:
-            if model_name not in models:
-                return jsonify({"error": "Model not supported"}), 400
-                
-            model = models[model_name]
-            options = {"task": task, "fp16": False}
-            if language != "auto":
-                options["language"] = language
-                
-            result = model.transcribe(file_path, **options)
-            surowy_tekst = result["text"]
-            
-            os.remove(file_path)
-            
-            notatki_ai = ""
-            if surowy_tekst.strip():
-                prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst pochodzący z nagrania audio i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esaimencję nagrania).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje i wątki wypisane od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (zadania i akcje do podjęcia, jeśli o nich wspomniano).\n\nOto tekst do przeanalizowania:\n{surowy_tekst}"
+            else:
                 try:
                     response = ollama.chat(model='llama3', messages=[{'role': 'user', 'content': prompt}])
                     notatki_ai = response['message']['content']
-                except Exception as ollama_err:
-                    notatki_ai = "Nie udało się wygenerować notatek AI. Upewnij się, że Ollama działa w tle."
+                except:
+                    notatki_ai = "Nie udało się wygenerować notatek AI lokalnie. Upewnij się, że Ollama działa w tle."
+        else:
+            # Klasyczne przetwarzanie audio STT
+            if processing_mode == 'online':
+                client = Groq(api_key=GROQ_API_KEY)
+                with open(file_path, "rb") as audio_file:
+                    transcription_options = {
+                        "file": (audio_file.name, audio_file.read()),
+                        "model": "whisper-large-v3"
+                    }
+                    if language != "auto":
+                        transcription_options["language"] = language
                     
-            detected_lang = result.get("language", language)
-            model_used_info = f"Lokalny Whisper ({model_name})"
+                    transcription = client.audio.transcriptions.create(**transcription_options)
+                    surowy_tekst = transcription.text
+                    
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                
+                notatki_ai = ""
+                if surowy_tekst.strip():
+                    prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst pochodzący z nagrania audio i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję nagrania).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje i wątki wypisane od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (zadania i akcje do podjęcia, jeśli o nich wspomniano).\n\nOto tekst do przeanalizowania:\n{surowy_tekst}"
+                    completion = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    notatki_ai = completion.choices[0].message.content
+                    
+                detected_lang = language if language != "auto" else "pl"
+                model_used_info = "Groq Cloud (Whisper Large V3)"
+                
+            else:
+                if model_name not in models:
+                    return jsonify({"error": "Model not supported"}), 400
+                    
+                model = models[model_name]
+                options = {"task": task, "fp16": False}
+                if language != "auto":
+                    options["language"] = language
+                    
+                result = model.transcribe(file_path, **options)
+                surowy_tekst = result["text"]
+                
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                
+                notatki_ai = ""
+                if surowy_tekst.strip():
+                    prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst pochodzący z nagrania audio i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję nagrania).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje i wątki wypisane od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (zadania i akcje do podjęcia, jeśli o nich wspomniano).\n\nOto tekst do przeanalizowania:\n{surowy_tekst}"
+                    try:
+                        response = ollama.chat(model='llama3', messages=[{'role': 'user', 'content': prompt}])
+                        notatki_ai = response['message']['content']
+                    except Exception as ollama_err:
+                        notatki_ai = "Nie udało się wygenerować notatek AI. Upewnij się, że Ollama działa w tle."
+                        
+                detected_lang = result.get("language", language)
+                model_used_info = f"Lokalny Whisper ({model_name})"
 
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -235,6 +284,7 @@ def transcribe():
             "INSERT INTO history (user_email, filename, raw_text, ai_notes) VALUES (?, ?, ?, ?)",
             (session['user_email'], display_title, surowy_tekst.strip(), notatki_ai.strip())
         )
+        new_id = cursor.lastrowid
         conn.commit()
         conn.close()
 
@@ -244,13 +294,56 @@ def transcribe():
             "model_used": model_used_info,
             "language": detected_lang,
             "task": task,
-            "saved_name": display_title
+            "saved_name": display_title,
+            "record_id": new_id
         })
         
     except Exception as e:
-        if os.path.exists(file_path):
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
         return jsonify({"error": str(e)}), 500
+
+@app.route('/ask-question', methods=['POST'])
+def ask_question():
+    if 'user_email' not in session:
+        return jsonify({"error": "Brak autoryzacji"}), 401
+        
+    data = request.get_json()
+    record_id = data.get('id')
+    question = data.get('question', '').strip()
+    
+    if not record_id or not question:
+        return jsonify({"error": "Brak ID nagrania lub pytania"}), 400
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT raw_text FROM history WHERE id = ? AND user_email = ?", (record_id, session['user_email']))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({"error": "Nie znaleziono nagrania w historii"}), 404
+        
+    transkrypcja = row[0]
+    
+    prompt = f"""Jesteś inteligentnym asystentem. Odpowiedz krótko i konkretnie na pytanie użytkownika, opierając się wyłącznie na podanym poniżej tekście transkrypcji z nagrania audio.
+
+Tekst transkrypcji:
+{transkrypcja}
+
+Pytanie użytkownika:
+{question}"""
+
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        odpowiedz_ai = completion.choices[0].message.content
+        return jsonify({"answer": odpowiedz_ai})
+    except Exception as e:
+        return jsonify({"error": f"Błąd AI: {str(e)}"}), 500
 
 @app.route('/get-history', methods=['GET'])
 def get_history():
