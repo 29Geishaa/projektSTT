@@ -47,6 +47,17 @@ def init_db():
             FOREIGN KEY(user_email) REFERENCES users(email)
         )
     ''')
+    # NOWA TABELA: Pamięć czatu (Prawdziwa rozmowa)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(record_id) REFERENCES history(id) ON DELETE CASCADE
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -206,7 +217,6 @@ def transcribe():
             detected_lang = "Plik tekstowy"
             model_used_info = "Czysty tekst (Brak STT)"
             
-            # Generowanie notatki AI dla tekstu przez Groq/Ollama
             prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (akcje do podjęcia).\n\nOto tekst:\n{surowy_tekst}"
             if processing_mode == 'online':
                 client = Groq(api_key=GROQ_API_KEY)
@@ -317,30 +327,55 @@ def ask_question():
         
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    
+    # 1. Sprawdzenie uprawnień i pobranie tekstu źródłowego
     cursor.execute("SELECT raw_text FROM history WHERE id = ? AND user_email = ?", (record_id, session['user_email']))
     row = cursor.fetchone()
-    conn.close()
     
     if not row:
-        return jsonify({"error": "Nie znaleziono nagrania w historii"}), 404
+        conn.close()
+        return jsonify({"error": "Nie znaleziono nagrania w Twojej historii"}), 404
         
     transkrypcja = row[0]
     
-    prompt = f"""Jesteś inteligentnym asystentem. Odpowiedz krótko i konkretnie na pytanie użytkownika, opierając się wyłącznie na podanym poniżej tekście transkrypcji z nagrania audio.
-
-Tekst transkrypcji:
-{transkrypcja}
-
-Pytanie użytkownika:
-{question}"""
+    # 2. Pobranie historii czatu (ostatnie 6 wiadomości chronologicznie)
+    cursor.execute(
+        "SELECT role, content FROM (SELECT role, content, id FROM chat_history WHERE record_id = ? ORDER BY id DESC LIMIT 6) ORDER BY id ASC", 
+        (record_id,)
+    )
+    context_rows = cursor.fetchall()
+    conn.close()
+    
+    # 3. Budowanie kontekstu konwersacji
+    messages = [
+        {
+            "role": "system",
+            "content": f"Jesteś inteligentnym asystentem. Odpowiadasz na pytania użytkownika, opierając się wyłącznie na podanym poniżej tekście transkrypcji. Prowadź naturalną dyskusję, pamiętając poprzedni kontekst rozmowy.\n\nTekst transkrypcji:\n{transkrypcja}"
+        }
+    ]
+    
+    for role, content in context_rows:
+        messages.append({"role": role, "content": content})
+        
+    messages.append({"role": "user", "content": question})
 
     try:
+        # 4. Zapytanie do Groq Cloud
         client = Groq(api_key=GROQ_API_KEY)
         completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}]
+            messages=messages
         )
         odpowiedz_ai = completion.choices[0].message.content
+        
+        # 5. Zapisanie aktualnego pytania oraz odpowiedzi do bazy (pamięć trwała)
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO chat_history (record_id, role, content) VALUES (?, ?, ?)", (record_id, 'user', question))
+        cursor.execute("INSERT INTO chat_history (record_id, role, content) VALUES (?, ?, ?)", (record_id, 'assistant', odpowiedz_ai))
+        conn.commit()
+        conn.close()
+        
         return jsonify({"answer": odpowiedz_ai})
     except Exception as e:
         return jsonify({"error": f"Błąd AI: {str(e)}"}), 500

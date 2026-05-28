@@ -5,390 +5,507 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel Transkrypcji STT</title>
     <style>
+        :root {
+            --bg-main: #0b0f19;
+            --bg-card: rgba(23, 28, 41, 0.6);
+            --bg-toolbar: rgba(30, 37, 56, 0.4);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent-purple: #8b5cf6;
+            --accent-blue: #3b82f6;
+            --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --success: #10b981;
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
         }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #1a1a1a;
-            color: #e0e0e0;
+            background-color: var(--bg-main);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(59, 130, 246, 0.15) 0px, transparent 50%);
+            color: var(--text-main);
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             padding: 20px;
-            overflow-x: hidden;
+            overflow: hidden;
         }
+
         .app-container {
-            background-color: #262626;
+            background-color: var(--bg-card);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             width: 100%;
-            max-width: 1100px;
-            height: 95vh;
-            border-radius: 12px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            max-width: 1200px;
+            height: 92vh;
+            border-radius: 16px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            border: 1px solid #333;
+            border: 1px solid var(--border-color);
             position: relative;
         }
+
+        /* Górny pasek użytkownika */
         .user-bar {
-            background-color: #202020;
-            padding: 10px 30px;
-            border-bottom: 1px solid #333;
+            background-color: rgba(11, 15, 25, 0.5);
+            padding: 12px 30px;
+            border-bottom: 1px solid var(--border-color);
             display: flex;
             justify-content: space-between;
             align-items: center;
             font-size: 14px;
-            color: #aaa;
+            color: var(--text-muted);
         }
+
+        .user-bar strong {
+            color: var(--text-main);
+        }
+
         .user-bar-right {
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 20px;
         }
+
         .user-bar a {
-            color: #007bff;
+            color: var(--text-muted);
             text-decoration: none;
             transition: color 0.2s;
         }
+
         .user-bar a:hover {
-            color: #0056b3;
+            color: var(--accent-blue);
         }
+
         .user-bar a.logout-link {
-            color: #dc3545;
+            color: #f87171;
+            font-weight: 500;
         }
+
         .user-bar a.logout-link:hover {
-            color: #bd2130;
+            color: var(--danger);
         }
+
         .history-trigger {
             background: none;
             border: none;
-            color: #ffc107;
-            font-size: 18px;
+            color: var(--warning);
+            font-size: 14px;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 5px;
-            font-weight: 500;
-            transition: transform 0.2s, color 0.2s;
-        }
-        .history-trigger:hover {
-            color: #e0a800;
-            transform: scale(1.05);
-        }
-        .header {
-            padding: 20px 30px;
-            border-bottom: 1px solid #333;
-            background-color: #2d2d2d;
-        }
-        .header h1 {
-            font-size: 20px;
+            gap: 6px;
             font-weight: 600;
-            color: #ffffff;
+            transition: transform 0.2s, opacity 0.2s;
         }
+
+        .history-trigger:hover {
+            opacity: 0.8;
+            transform: translateY(-1px);
+        }
+
+        /* Główny nagłówek panelu */
+        .header {
+            padding: 20px 30px 15px 30px;
+            background: transparent;
+        }
+
+        .header h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Wnętrze aplikacji */
         .main-content {
             flex: 1;
             display: flex;
             flex-direction: column;
-            padding: 30px;
-            gap: 20px;
+            padding: 0 30px 30px 30px;
+            gap: 15px;
             overflow-y: auto;
         }
+
+        /* Paski narzędzi (Toolbary) */
         .toolbar {
             display: flex;
             flex-wrap: wrap;
             gap: 15px;
             align-items: center;
-            background-color: #2d2d2d;
-            padding: 15px 20px;
-            border-radius: 8px;
-            border: 1px solid #383838;
+            background-color: var(--bg-toolbar);
+            padding: 12px 20px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
         }
+
         .tool-group {
             display: flex;
             align-items: center;
             gap: 10px;
-            flex: 0 0 auto; /* Zapobiega ściskaniu i nakładaniu */
+            flex: 0 0 auto;
         }
+
         .tool-group:last-of-type {
-            flex: 1 1 300px; /* YouTube rozciągnie się, jeśli ma miejsce */
+            flex: 1 1 250px;
         }
+
         .tool-group-input {
             width: 100%;
-            background-color: #1a1a1a;
-            color: #e0e0e0;
-            border: 1px solid #444;
-            padding: 8px 12px;
-            border-radius: 6px;
+            background-color: rgba(11, 15, 25, 0.6);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            padding: 8px 14px;
+            border-radius: 8px;
             font-size: 14px;
             outline: none;
+            transition: border-color 0.2s;
         }
+
         .tool-group-input:focus {
-            border-color: #dc3545;
+            border-color: var(--accent-purple);
         }
+
         label {
-            font-size: 14px;
-            color: #aaa;
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 500;
             white-space: nowrap;
         }
+
         select, input[type="file"] {
-            background-color: #1a1a1a;
-            color: #e0e0e0;
-            border: 1px solid #444;
+            background-color: rgba(11, 15, 25, 0.6);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
             padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 14px;
+            border-radius: 8px;
+            font-size: 13px;
             outline: none;
             cursor: pointer;
+            transition: border-color 0.2s;
         }
+
         select:focus {
-            border-color: #007bff;
+            border-color: var(--accent-blue);
         }
+
+        /* Przyciski */
         .btn {
             padding: 9px 18px;
-            font-size: 14px;
-            font-weight: 500;
+            font-size: 13px;
+            font-weight: 600;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
-            transition: background-color 0.2s, opacity 0.2s;
+            transition: all 0.2s ease;
             white-space: nowrap;
         }
+
         .btn-primary {
-            background-color: #007bff;
+            background: var(--accent-gradient);
             color: white;
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.25);
         }
+
         .btn-primary:hover {
-            background-color: #0056b3;
+            opacity: 0.9;
+            box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4);
         }
+
         .btn-warning {
-            background-color: #ffc107;
-            color: #111;
+            background-color: var(--warning);
+            color: #0b0f19;
         }
+
         .btn-warning:hover {
-            background-color: #e0a800;
+            background-color: #d97706;
         }
+
         .btn-danger {
-            background-color: #dc3545;
+            background-color: var(--danger);
             color: white;
         }
+
         .btn-danger:hover {
-            background-color: #bd2130;
+            background-color: #dc2626;
         }
+
         .btn-secondary {
-            background-color: #444;
-            color: #e0e0e0;
+            background-color: rgba(255, 255, 255, 0.08);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
         }
+
         .btn-secondary:hover {
-            background-color: #555;
+            background-color: rgba(255, 255, 255, 0.15);
         }
+
         .btn:disabled {
-            background-color: #333;
-            color: #777;
+            background-color: rgba(255, 255, 255, 0.03);
+            color: rgba(255, 255, 255, 0.2);
+            border-color: transparent;
+            box-shadow: none;
             cursor: not-allowed;
         }
+
+        /* Wizualizator Audio */
         .visualizer-container {
-            height: 60px;
-            background-color: #1a1a1a;
-            border-radius: 8px;
-            border: 1px solid #333;
+            height: 45px;
+            background-color: rgba(11, 15, 25, 0.4);
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
             overflow: hidden;
         }
+
         canvas {
             width: 100%;
             height: 100%;
             display: block;
         }
+
+        /* Status i spinner */
         .status-container {
             display: flex;
             align-items: center;
             gap: 10px;
-            font-size: 14px;
-            color: #aaa;
+            font-size: 13px;
+            color: var(--text-muted);
         }
+
         .spinner {
             display: none;
             width: 16px;
             height: 16px;
-            border: 2px solid #555;
-            border-top: 2px solid #007bff;
+            border: 2px solid rgba(255,255,255,0.1);
+            border-top: 2px solid var(--accent-blue);
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* Sekcja wyników (Teksty / Notatki) */
         .results-wrapper {
             flex: 1;
             display: flex;
             gap: 20px;
-            min-height: 250px;
+            min-height: 200px;
         }
+
         .result-box {
             flex: 1;
             display: flex;
             flex-direction: column;
             gap: 10px;
         }
+
         .result-box-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
+
         .result-box h3 {
-            font-size: 14px;
-            color: #aaa;
-            font-weight: 500;
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+
         .export-btn-group {
             display: flex;
             gap: 5px;
         }
+
         .btn-xs {
-            padding: 4px 8px;
+            padding: 4px 10px;
             font-size: 11px;
-            border-radius: 4px;
+            border-radius: 6px;
         }
+
         textarea {
             flex: 1;
-            background-color: #1a1a1a;
-            color: #e0e0e0;
-            border: 1px solid #333;
-            border-radius: 8px;
-            padding: 20px;
-            font-size: 15px;
+            background-color: rgba(11, 15, 25, 0.6);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 14px;
             line-height: 1.6;
             resize: none;
             outline: none;
             font-family: inherit;
+            transition: border-color 0.2s;
         }
+
         textarea:focus {
-            border-color: #444;
+            border-color: var(--accent-blue);
         }
+
         textarea.ai-notes-area {
-            border-color: #2b4c7e;
-            background-color: #16222f;
+            border-color: rgba(139, 92, 246, 0.2);
+            background-color: rgba(139, 92, 246, 0.03);
+        }
+        textarea.ai-notes-area:focus {
+            border-color: var(--accent-purple);
         }
         
+        /* Sekcja Czatu AI */
         .chat-section {
-            background-color: #2d2d2d;
-            border: 1px solid #383838;
-            border-radius: 8px;
+            background-color: var(--bg-toolbar);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
             padding: 15px 20px;
             display: flex;
             flex-direction: column;
             gap: 12px;
         }
+
         .chat-header h4 {
-            font-size: 14px;
-            color: #ffc107;
+            font-size: 13px;
+            color: var(--warning);
             font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+
         .chat-input-wrapper {
             display: flex;
-            gap: 10px;
+            gap: 12px;
         }
+
         .chat-input {
             flex: 1;
-            background-color: #1a1a1a;
-            color: #e0e0e0;
-            border: 1px solid #444;
-            padding: 10px 14px;
-            border-radius: 6px;
+            background-color: rgba(11, 15, 25, 0.6);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            padding: 10px 16px;
+            border-radius: 8px;
             font-size: 14px;
             outline: none;
+            transition: border-color 0.2s;
         }
+
         .chat-input:focus {
-            border-color: #ffc107;
+            border-color: var(--warning);
         }
+
         .chat-response-box {
             display: none;
-            background-color: #1a1a1a;
-            border-left: 3px solid #ffc107;
-            border-radius: 4px;
-            padding: 12px 16px;
+            background-color: rgba(11, 15, 25, 0.4);
+            border-left: 3px solid var(--warning);
+            border-radius: 6px;
+            padding: 14px 18px;
             font-size: 14px;
-            line-height: 1.5;
-            color: #e0e0e0;
-            max-height: 120px;
+            line-height: 1.6;
+            color: var(--text-main);
+            max-height: 140px;
             overflow-y: auto;
         }
 
         .divider {
-            border-left: 1px solid #444;
+            border-left: 1px solid var(--border-color);
             height: 25px;
             margin: 0 5px;
         }
+
+        /* Panel historii (Sidebar) */
         .history-sidebar {
             position: absolute;
             top: 0;
-            right: -360px;
-            width: 360px;
+            right: -380px;
+            width: 380px;
             height: 100%;
-            background-color: #202020;
-            border-left: 1px solid #333;
-            box-shadow: -4px 0 15px rgba(0,0,0,0.5);
-            transition: right 0.3s ease-in-out;
+            background-color: #0e131f;
+            border-left: 1px solid var(--border-color);
+            box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+            transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             z-index: 999;
             display: flex;
             flex-direction: column;
         }
+
         .history-sidebar.open {
             right: 0;
         }
+
         .history-header {
-            padding: 20px;
-            background-color: #2d2d2d;
-            border-bottom: 1px solid #333;
+            padding: 20px 25px;
+            background-color: rgba(23, 28, 41, 0.4);
+            border-bottom: 1px solid var(--border-color);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
+
         .history-header h2 {
             font-size: 16px;
+            font-weight: 600;
             color: #fff;
         }
+
         .close-history-btn {
             background: none;
             border: none;
-            color: #aaa;
-            font-size: 20px;
+            color: var(--text-muted);
+            font-size: 24px;
             cursor: pointer;
+            transition: color 0.2s;
         }
+
         .close-history-btn:hover {
             color: #fff;
         }
+
         .history-list-container {
             flex: 1;
             overflow-y: auto;
-            padding: 15px;
+            padding: 20px;
             display: flex;
             flex-direction: column;
             gap: 12px;
         }
+
         .history-item {
-            background-color: #2d2d2d;
-            border: 1px solid #383838;
-            border-radius: 6px;
-            padding: 12px;
+            background-color: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            transition: background-color 0.2s;
+            transition: all 0.2s ease;
         }
+
         .history-item:hover {
-            background-color: #333;
+            background-color: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.15);
         }
+
         .history-item-info {
             flex: 1;
             cursor: pointer;
             overflow: hidden;
             margin-right: 10px;
         }
+
         .history-item-title {
             font-size: 13px;
             font-weight: 600;
@@ -398,78 +515,90 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
+
         .history-item-date {
             font-size: 11px;
-            color: #777;
+            color: var(--text-muted);
         }
+
         .delete-item-btn {
             background: none;
             border: none;
-            color: #dc3545;
+            color: #f87171;
             cursor: pointer;
             font-size: 14px;
-            padding: 5px;
-            border-radius: 4px;
+            padding: 6px;
+            border-radius: 6px;
             transition: background-color 0.2s;
         }
+
         .delete-item-btn:hover {
-            background-color: rgba(220, 53, 69, 0.2);
+            background-color: rgba(239, 68, 68, 0.15);
         }
 
+        /* Przełącznik trybu (Lokalnie / Chmura) */
         .switch-container {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             cursor: pointer;
             user-select: none;
         }
+
         .switch-input {
             display: none;
         }
+
         .switch-slider {
-            width: 40px;
-            height: 20px;
-            background-color: #444;
-            border-radius: 20px;
+            width: 44px;
+            height: 22px;
+            background-color: rgba(255,255,255,0.1);
+            border-radius: 22px;
             position: relative;
             transition: background-color 0.2s;
-            border: 1px solid #555;
+            border: 1px solid var(--border-color);
         }
+
         .switch-slider::before {
             content: "";
             position: absolute;
-            width: 14px;
-            height: 14px;
+            width: 16px;
+            height: 16px;
             border-radius: 50%;
             background-color: #fff;
             top: 2px;
             left: 2px;
             transition: transform 0.2s;
         }
+
         .switch-input:checked + .switch-slider {
-            background-color: #007bff;
-            border-color: #0056b3;
+            background: var(--accent-gradient);
+            border-color: transparent;
         }
+
         .switch-input:checked + .switch-slider::before {
-            transform: translateX(20px);
+            transform: translateX(22px);
         }
+
         .online-label {
-            font-size: 14px;
-            font-weight: 500;
-            color: #777;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
             transition: color 0.2s;
         }
+
         .switch-input:checked ~ .online-label {
-            color: #007bff;
+            color: var(--accent-blue);
         }
+
         .badge-cloud {
-            background-color: #28a745;
-            color: #fff;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 500;
-            border: 1px solid #1e7e34;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            color: var(--success);
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            border: 1px solid rgba(16, 185, 129, 0.2);
         }
     </style>
 </head>
@@ -494,7 +623,7 @@
             <div class="toolbar">
                 <div class="tool-group">
                     <label class="switch-container">
-                        <span style="font-size: 14px; color: #aaa;">Lokalnie</span>
+                        <span style="font-size: 13px; color: var(--text-muted); font-weight:500;">Lokalnie</span>
                         <input type="checkbox" id="modeSwitch" class="switch-input">
                         <div class="switch-slider"></div>
                         <span class="online-label">Chmura Groq</span>
@@ -513,7 +642,7 @@
                 </div>
 
                 <div class="tool-group" id="cloudBadgeGroup" style="display: none;">
-                    <div class="badge-cloud"> Silnik: Groq Cloud (Whisper V3)</div>
+                    <div class="badge-cloud">✨ Silnik: Groq Cloud (Whisper V3)</div>
                 </div>
                 
                 <div class="divider"></div>
@@ -557,9 +686,9 @@
                 <div class="divider"></div>
 
                 <div class="tool-group">
-                    <label for="ytUrlInput" style="color: #ff3333;">YouTube URL:</label>
+                    <label for="ytUrlInput" style="color: #f87171;">YouTube URL:</label>
                     <input type="url" id="ytUrlInput" class="tool-group-input" placeholder="https://www.youtube.com/watch?v=...">
-                    <button id="ytProcessBtn" class="btn btn-danger" style="background-color: #cc1818;">Przetwórz YT</button>
+                    <button id="ytProcessBtn" class="btn btn-danger" style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger); color: #f87171;">Przetwórz YT</button>
                 </div>
 
                 <div style="margin-left: auto;" class="status-container">
@@ -594,16 +723,16 @@
                             <button onclick="exportData('pdf', 'result')" class="btn btn-secondary btn-xs">PDF</button>
                         </div>
                     </div>
-                    <textarea id="result" readonly placeholder="Tutaj pojawi się pełny, surowy tekst z nagrania..."></textarea>
+                    <textarea id="result" placeholder="Tutaj pojawi się pełny, surowy tekst z nagrania..."></textarea>
                 </div>
             </div>
 
             <div class="chat-section">
                 <div class="chat-header">
-                    <h4>🤖 Zadaj pytanie do tego nagrania / tekstu</h4>
+                    <h4>🤖 Zadaj pytanie do tego nagrania / tekstu (Czat z pamięcią kontekstową)</h4>
                 </div>
                 <div class="chat-input-wrapper">
-                    <input type="text" id="chatInput" class="chat-input" placeholder="np. O czym rozmawiali na samym początku? Jakie zadania przydzielono Mariuszowi?" disabled>
+                    <input type="text" id="chatInput" class="chat-input" placeholder="np. O czym rozmawiali na samym początku? Co trzeba zrobić?" disabled>
                     <button id="chatSendBtn" class="btn btn-warning" disabled>Zapytaj AI</button>
                 </div>
                 <div id="chatResponse" class="chat-response-box"></div>
@@ -687,26 +816,35 @@
         function toggleChatAccess(enable) {
             chatInput.disabled = !enable;
             chatSendBtn.disabled = !enable;
-            if(!enable) {
-                chatResponse.style.display = 'none';
-                chatResponse.innerHTML = '';
-                chatInput.value = '';
-            }
+            chatResponse.style.display = 'none';
+            chatResponse.innerHTML = '';
+            chatInput.value = '';
         }
 
         function startSmartCountdown(audioDurationSeconds) {
             clearInterval(countdownInterval);
             
+            // 1. Obsługa odliczania dla Chmury Groq (Timer zliczający sekundy w górę)
             if (modeSwitch.checked) {
-                setStatus("Wysyłanie danych do chmury Groq... Analiza AI", true);
+                let secondsElapsed = 0;
+                setStatus(`Wysyłanie danych do chmury Groq... (0s)`, true);
+                
+                countdownInterval = setInterval(() => {
+                    secondsElapsed++;
+                    setStatus(`Przetwarzanie w chmurze Groq... (${secondsElapsed}s)`, true);
+                }, 1000);
                 return;
             }
 
-            const speedMultipliers = { "tiny": 0.05, "base": 0.15, "small": 0.3 };
-            const multiplier = speedMultipliers[modelSelect.value] || 0.15;
+            const speedMultipliers = { 
+                "tiny": 0.1,    
+                "base": 0.45,   
+                "small": 0.75    
+            };
+            const multiplier = speedMultipliers[modelSelect.value] || 0.35;
             
-            let timeLeft = Math.round((audioDurationSeconds * multiplier) + 2);
-            if (timeLeft < 3) timeLeft = 3;
+            let timeLeft = Math.round((audioDurationSeconds * multiplier) + 3);
+            if (timeLeft < 4) timeLeft = 4; 
 
             setStatus(`Analiza audio... Pozostało ok. ${timeLeft}s`, true);
 
@@ -735,7 +873,7 @@
         });
 
         async function loadHistoryFromServer() {
-            historyList.innerHTML = "<p style='color: #777; font-size: 13px;'>Ładowanie historii...</p>";
+            historyList.innerHTML = "<p style='color: var(--text-muted); font-size: 13px;'>Ładowanie historii...</p>";
             try {
                 const response = await fetch('/get-history');
                 const data = await response.json();
@@ -745,7 +883,7 @@
                     historyList.innerHTML = "";
                     
                     if (data.length === 0) {
-                        historyList.innerHTML = "<p style='color: #777; font-size: 13px;'>Brak zapisanych transkrypcji.</p>";
+                        historyList.innerHTML = "<p style='color: var(--text-muted); font-size: 13px;'>Brak zapisanych transkrypcji.</p>";
                         return;
                     }
                     
@@ -762,10 +900,10 @@
                         historyList.appendChild(itemDiv);
                     });
                 } else {
-                    historyList.innerHTML = "<p style='color: red; font-size: 13px;'>Błąd pobierania danych.</p>";
+                    historyList.innerHTML = "<p style='color: var(--danger); font-size: 13px;'>Błąd pobierania danych.</p>";
                 }
             } catch (err) {
-                historyList.innerHTML = "<p style='color: red; font-size: 13px;'>Błąd połączenia z bazą.</p>";
+                historyList.innerHTML = "<p style='color: var(--danger); font-size: 13px;'>Błąd połączenia z bazą.</p>";
             }
         }
 
@@ -845,14 +983,14 @@
                 animationId = requestAnimationFrame(draw);
                 
                 if (mediaRecorder && mediaRecorder.state === "paused") {
-                    canvasCtx.fillStyle = '#1a1a1a';
+                    canvasCtx.fillStyle = 'rgba(11, 15, 25, 0.4)';
                     canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
                     return;
                 }
 
                 analyser.getByteFrequencyData(dataArray);
 
-                canvasCtx.fillStyle = '#1a1a1a';
+                canvasCtx.fillStyle = '#0b0f19';
                 canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
 
                 const barWidth = (canvas.width / bufferLength) * 2.5;
@@ -860,8 +998,11 @@
                 let x = 0;
 
                 for (let i = 0; i < bufferLength; i++) {
-                    barHeight = dataArray[i] / 2;
-                    canvasCtx.fillStyle = `rgb(${barHeight + 50}, 123, 255)`;
+                    barHeight = dataArray[i] / 2.5;
+                    
+                    let percent = barHeight / canvas.height;
+                    canvasCtx.fillStyle = `rgb(${139 - (percent * 50)}, ${92 + (percent * 30)}, 246)`;
+                    
                     canvasCtx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
                     x += barWidth;
                 }
@@ -991,7 +1132,7 @@
 
             chatSendBtn.disabled = true;
             chatResponse.style.display = 'block';
-            chatResponse.innerHTML = "<span style='color: #ffc107;'>Generowanie odpowiedzi przez AI...</span>";
+            chatResponse.innerHTML = "<span style='color: var(--warning);'>Generowanie odpowiedzi przez AI...</span>";
 
             try {
                 const response = await fetch('/ask-question', {
@@ -1003,10 +1144,10 @@
                 if(data.answer) {
                     chatResponse.innerHTML = `<strong>Odpowiedź AI:</strong><br>${data.answer.replace(/\n/g, '<br>')}`;
                 } else {
-                    chatResponse.innerHTML = `<span style='color: red;'>Błąd: ${data.error || 'Brak odpowiedzi'}</span>`;
+                    chatResponse.innerHTML = `<span style='color: var(--danger);'>Błąd: ${data.error || 'Brak odpowiedzi'}</span>`;
                 }
             } catch(e) {
-                chatResponse.innerHTML = "<span style='color: red;'>Błąd podczas komunikacji z serwerem.</span>";
+                chatResponse.innerHTML = "<span style='color: var(--danger);'>Błąd podczas komunikacji z serwerem.</span>";
             } finally {
                 chatSendBtn.disabled = false;
             }

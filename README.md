@@ -6,10 +6,18 @@ Aplikacja webowa typu **SaaS** zbudowana we **Flasku**, która pozwala na **reje
 
 ## **🛠️ Główne Funkcje (Tech Stack)**
 
-* **Logowanie i Baza Danych:** System **rejestracji i autoryzacji** użytkowników oparty na **Flask** oraz bazie **SQLite**.
-* **Transkrypcja (STT):** Zamiana **mowy na tekst** w czasie rzeczywistym przy użyciu modelu **OpenAI Whisper**.
+* **Logowanie i Baza Danych:** System **rejestracji, autoryzacji oraz zmiany hasła** użytkowników oparty na **Flask** oraz bazie **SQLite**. Wszystkie hasła są bezpiecznie i nieodwracalnie **haszowane jednokierunkowo z** algorytmem `pbkdf2:sha256` przy użyciu biblioteki *Werkzeug*.
+* **Panel Historii Nagrań:** Integracja bazy danych z bocznym panelem (Sidebar), który pozwala przeglądać listę zapisanych nagrań pod własnymi nazwami, wczytywać archiwalne transkrypcje oraz trwale je usuwać.
+* **Hybrydowa Transkrypcja (STT):** Zamiana **mowy na tekst** w dwóch trybach do wyboru:
+  * **Lokalnie:** Przy użyciu modeli **OpenAI Whisper** (*Tiny*, *Base*, *Small*).
+  * **W chmurze:** Błyskawiczne przetwarzanie sieciowe za pomocą zewnętrznego API **Groq Cloud (Whisper V3)**.
+* **Inteligentny Timer i Odliczanie:** Interfejs automatycznie kalkuluje czas oczekiwania. Dla chmury Groq uruchamia stoper zliczający sekundy w górę, a dla modeli lokalnych (w tym zoptymalizowanego modelu `base`) precyzyjnie wylicza czas na podstawie długości pliku audio za pomocą zaawansowanych mnożników.
+* **Obsługa Różnych Źródeł Danych:** Możliwość nagrywania z mikrofonu (z funkcją pauzy i wznawiania), przesyłania gotowych plików audio/tekstowych z dysku oraz **automatycznego pobierania i przetwarzania filmów z serwisu YouTube (URL)**.
+* **Wizualizator Audio Live:** Dynamiczny wykres falowy wbudowany w interfejs, reagujący w czasie rzeczywistym na głos z mikrofonu podczas nagrywania.
 * **Analiza AI (LLM):** Automatyczne **strukturyzowanie tekstu**, wyciąganie **wniosków** i zadań (**To-Do**) przy użyciu modelu **Llama 3** (uruchamianego lokalnie przez **Ollama**).
-* **Dwu-kolumnowy Interfejs:** Czytelny frontend (**HTML/CSS/JS**) prezentujący **surowy tekst** po prawej stronie oraz **gotową notatkę AI** po lewej.
+* **Interaktywny Czat Kontekstowy:** Dedykowane okno konwersacyjne z Llama 3 pod wynikami, pozwalające zadawać pytania bezpośrednio do treści przetworzonego tekstu lub nagrania z zachowaniem pamięci kontekstu.
+* **Wielofunkcyjny Eksport:** Możliwość niezależnego pobierania surowego tekstu transkrypcji oraz ustrukturyzowanej notatki AI do plików w formatach **TXT, Word (DOCX) oraz PDF**.
+* **Dwu-kolumnowy Interfejs:** Czytelny, nowoczesny frontend w ciemnym stylu (**HTML/CSS/JS**) prezentujący **surowy tekst** po prawej stronie oraz **gotową notatkę AI** po lewej.
 
 ---
 
@@ -18,39 +26,33 @@ Aplikacja webowa typu **SaaS** zbudowana we **Flasku**, która pozwala na **reje
 ### **1. Klonowanie repozytorium i środowisko**
 Klonujemy projekt, tworzymy wirtualne środowisko Pythona (**`venv`**) i je aktywujemy:
 
-
-```
+```bash
 git clone [https://github.com/29Geishaa/projektSTT.git](https://github.com/29Geishaa/projektSTT.git)
 cd projektSTT
 python3 -m venv venv
 source venv/bin/activate
 ```
 
-
 2. Instalacja zależności
 Instalujemy wszystkie wymagane biblioteki Pythona zapisane w pliku konfiguracyjnym:
 
-```
+```Bash
 pip install -r requirements.txt
 ```
-
 3. Konfiguracja modeli AI (Ollama)
 Upewnij się, że masz zainstalowaną aplikację Ollama oraz pobrany odpowiedni model językowy:
-
-```
+```Bash
 ollama run llama3
 ```
-
-🚀 Uruchomienie Projektu
+ Uruchomienie Projektu
 Odpal serwer deweloperski Flaska:
 
-```
+```Bash
 python app.py
-Aplikacja domyślnie zacznie działać lokalnie na porcie 8000 (http://127.0.0.1:8000).
 ```
+Aplikacja domyślnie zacznie działać lokalnie na porcie 8000 (http://127.0.0.1:8000).
 
-
-📝 Przykładowy Scenariusz Testowy
+ Przykładowy Scenariusz Testowy
 Aby przetestować pełne możliwości systemu, zaloguj się, kliknij przycisk nagrywania i przeczytaj na głos poniższy tekst:
 
 "Dobra, słuchajcie, musimy szybko ogarnąć plan na ten tydzień, bo gonią nas terminy. Przede wszystkim, Kasia musi do czwartku skończyć ten raport finansowy dla zarządu, bo bez tego nie ruszymy z budżetem. Janek, Ty miałeś pogadać z klientem i ustalić, czy odpowiada im ten nowy projekt graficzny – daj mi znać, jak tylko dostaniesz maila, najlepiej do jutra do piętnastej. No i ja zajmę się rezerwacją sali na piątkowe spotkanie podsumowujące. Ogólnie najważniejsze jest to, żebyśmy do końca miesiąca zamknęli ten etap projektu, bo inaczej naliczą nam kary. Czy ktoś ma jeszcze jakieś pytania? Jak nie, to bierzemy się do roboty."
