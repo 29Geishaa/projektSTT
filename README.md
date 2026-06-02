@@ -32,14 +32,38 @@ cd projektSTT
 python3 -m venv venv
 source venv/bin/activate
 ```
+**1.2 Na system Windows (Command Prompt / PowerShell):**
+```
+git clone [https://github.com/29Geishaa/projektSTT.git](https://github.com/29Geishaa/projektSTT.git)
+cd projektSTT
+python -m venv venv
+```
 
-2. Instalacja zależności
-Instalujemy wszystkie wymagane biblioteki Pythona zapisane w pliku konfiguracyjnym:
+**Jeśli używasz klasycznego CMD (Wiersz polecenia):**
+```
+venv\Scripts\activate
+```
+**Jeśli używasz PowerShell (może wymagać uruchomienia jako Administrator):**
+```
+.\venv\Scripts\Activate.ps1
+```
+
+**2. Instalacja zależności**
+<br>Instalujemy wszystkie wymagane biblioteki Pythona zapisane w pliku konfiguracyjnym:
 
 ```Bash
 pip install -r requirements.txt
 ```
-3. Konfiguracja modeli AI (Ollama)
+**Ważna uwaga dla Windowsa: Aby lokalny model Whisper działał prawidłowo na procesorze (CPU) bez błędów kompilacji, na systemie Windows zaleca się najpierw zainstalować wersję procesorową PyTorcha bezpośrednio z oficjalnego repozytorium twórców, a dopiero potem resztę pakietów:**
+```
+Krok 1 (Tylko Windows - instalacja stabilnego Torch CPU):
+pip install torch --index-url [https://download.pytorch.org/whl/cpu](https://download.pytorch.org/whl/cpu)
+```
+```
+Krok 2 (Wszystkie systemy - instalacja pozostałych bibliotek):
+pip install -r requirements.txt
+```
+**3. Konfiguracja modeli AI (Ollama)
 Upewnij się, że masz zainstalowaną aplikację Ollama oraz pobrany odpowiedni model językowy:
 ```Bash
 ollama run llama3
@@ -58,3 +82,12 @@ Aby przetestować pełne możliwości systemu, zaloguj się, kliknij przycisk na
 "Dobra, słuchajcie, musimy szybko ogarnąć plan na ten tydzień, bo gonią nas terminy. Przede wszystkim, Kasia musi do czwartku skończyć ten raport finansowy dla zarządu, bo bez tego nie ruszymy z budżetem. Janek, Ty miałeś pogadać z klientem i ustalić, czy odpowiada im ten nowy projekt graficzny – daj mi znać, jak tylko dostaniesz maila, najlepiej do jutra do piętnastej. No i ja zajmę się rezerwacją sali na piątkowe spotkanie podsumowujące. Ogólnie najważniejsze jest to, żebyśmy do końca miesiąca zamknęli ten etap projektu, bo inaczej naliczą nam kary. Czy ktoś ma jeszcze jakieś pytania? Jak nie, to bierzemy się do roboty."
 
 Efekt: System Whisper przepisze słowo w słowo Twoją mowę, a Llama 3 automatycznie stworzy z tego czystą agendę z podziałem na zadania dla Kasi, Janka oraz Ciebie wraz z terminami.
+
+### 💡 O czym jeszcze warto pamiętać przy wsparciu dla Windowsa?
+
+1. **Wtyczka do obsługi audio (FFmpeg):** Lokalny model Whisper (z biblioteki `openai-whisper`) potrzebuje do działania programu `ffmpeg` do dekodowania plików audio. Na Linuxie instaluje się go jedną komendą, ale na Windowsie użytkownik musi pobrać pliki binarne FFmpeg, wrzucić je np. na dysk `C:\` i dodać ścieżkę do zmiennych środowiskowych systemowych (tzw. `PATH`). **Warto o tym wspomnieć użytkownikom**, jeśli zgłoszą, że lokalna transkrypcja rzuca błędem `FileNotFoundError: [WinError 2]`. (Dla trybu w chmurze Groq to nie jest wymagane!).
+2. **Uprawnienia PowerShell:** Na Windowsie domyślnie zablokowane jest uruchamianie skryptów w PowerShellu (w tym aktywacja `venv`). Jeśli ktoś dostanie błąd `Script Execution Restriced`, musi jednorazowo wbić do PowerShella jako Administrator i wpisać: `Set-ExecutionPolicy RemoteSigned`.
+
+Dzięki dodaniu tych ścieżek i instrukcji w pliku README Twój projekt stanie się w pełni **multiplatformowy** (Cross-platform) i każdy programista korzystający z Windowsa bez problemu go uruchomi! Zaktualizuj plik, zrób `git commit` i zsynchronizuj zmiany.
+
+### **Miłego użytkowania :D**
