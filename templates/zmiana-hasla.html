@@ -9,14 +9,26 @@
     
     <style>
         :root {
-            --primary-color: #4f46e5;
-            --primary-hover: #4338ca;
-            --bg-gradient-start: #f8fafc;
-            --bg-gradient-end: #e2e8f0;
+            --bg-main: #0b0f19;
+            --bg-card: rgba(23, 28, 41, 0.78);
+            --bg-input: rgba(11, 15, 25, 0.72);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent-purple: #8b5cf6;
+            --accent-blue: #3b82f6;
+            --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+            --danger: #ef4444;
+            --success: #10b981;
+            color-scheme: dark;
         }
 
         body {
-            background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+            background-color: var(--bg-main);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(139, 92, 246, 0.16) 0px, transparent 48%),
+                radial-gradient(at 100% 100%, rgba(59, 130, 246, 0.14) 0px, transparent 48%);
+            color: var(--text-main);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -32,18 +44,21 @@
         }
 
         .password-card {
-            background: #ffffff;
-            border: none;
+            background: var(--bg-card);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid var(--border-color);
             border-radius: 16px;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
             padding: 40px 30px;
         }
 
         .brand-icon {
             width: 60px;
             height: 60px;
-            background: rgba(239, 68, 68, 0.1); /* Delikatna czerwona poświata dla operacji bezpieczeństwa */
-            color: #ef4444;
+            background: rgba(239, 68, 68, 0.12);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.22);
             border-radius: 12px;
             display: flex;
             align-items: center;
@@ -53,7 +68,7 @@
         }
 
         .password-title {
-            color: #1e293b;
+            color: var(--text-main);
             font-weight: 700;
             font-size: 24px;
             text-align: center;
@@ -61,34 +76,49 @@
         }
 
         .password-subtitle {
-            color: #64748b;
+            color: var(--text-muted);
             font-size: 14px;
             text-align: center;
             margin-bottom: 32px;
         }
 
         .form-label {
-            color: #334155;
+            color: var(--text-muted);
             font-weight: 500;
             font-size: 14px;
             margin-bottom: 6px;
         }
 
         .form-control {
-            border: 1px solid #cbd5e1;
+            background-color: var(--bg-input);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
             border-radius: 8px;
             padding: 10px 14px;
             font-size: 15px;
             transition: all 0.2s ease;
         }
 
+        .form-control::placeholder {
+            color: rgba(148, 163, 184, 0.65);
+        }
+
         .form-control:focus {
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.15);
+            background-color: rgba(11, 15, 25, 0.9);
+            color: var(--text-main);
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.16);
+        }
+
+        .form-control:-webkit-autofill,
+        .form-control:-webkit-autofill:hover,
+        .form-control:-webkit-autofill:focus {
+            -webkit-text-fill-color: var(--text-main);
+            box-shadow: 0 0 0 1000px #111827 inset;
         }
 
         .btn-primary {
-            background-color: var(--primary-color);
+            background: var(--accent-gradient);
             border: none;
             border-radius: 8px;
             padding: 11px;
@@ -98,7 +128,8 @@
         }
 
         .btn-primary:hover {
-            background-color: var(--primary-hover);
+            opacity: 0.92;
+            box-shadow: 0 8px 22px rgba(59, 130, 246, 0.24);
         }
 
         .back-link {
@@ -108,7 +139,7 @@
         }
 
         .back-link a {
-            color: #64748b;
+            color: var(--text-muted);
             text-decoration: none;
             font-weight: 500;
             display: inline-flex;
@@ -117,7 +148,7 @@
         }
 
         .back-link a:hover {
-            color: #1e293b;
+            color: var(--text-main);
         }
 
         .alert {
@@ -125,6 +156,34 @@
             font-size: 14px;
             padding: 12px;
             margin-bottom: 20px;
+        }
+
+        .alert-danger {
+            color: #fecaca;
+            background-color: rgba(239, 68, 68, 0.12);
+            border-color: rgba(239, 68, 68, 0.28);
+        }
+
+        .alert-success {
+            color: #bbf7d0;
+            background-color: rgba(16, 185, 129, 0.12);
+            border-color: rgba(16, 185, 129, 0.28);
+        }
+
+        .btn-close {
+            filter: invert(1) grayscale(100%) brightness(180%);
+            opacity: 0.7;
+        }
+
+        .password-card hr {
+            border-color: var(--border-color);
+            opacity: 1 !important;
+        }
+
+        @media (max-width: 480px) {
+            .password-card {
+                padding: 30px 22px;
+            }
         }
     </style>
 </head>

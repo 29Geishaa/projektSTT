@@ -610,6 +610,7 @@
             <div class="user-bar-right">
                 <button id="openHistoryBtn" class="history-trigger">🕒 Historia</button>
                 <div class="divider" style="height: 15px;"></div>
+                <a href="{{ url_for('settings') }}">Ustawienia</a>
                 <a href="{{ url_for('change_password') }}">Zmiana hasła</a>
                 <a href="{{ url_for('logout') }}" class="logout-link">Wyloguj się</a>
             </div>
@@ -626,7 +627,7 @@
                         <span style="font-size: 13px; color: var(--text-muted); font-weight:500;">Lokalnie</span>
                         <input type="checkbox" id="modeSwitch" class="switch-input">
                         <div class="switch-slider"></div>
-                        <span class="online-label">Chmura Groq</span>
+                        <span class="online-label">Chmura AI</span>
                     </label>
                 </div>
 
@@ -641,8 +642,29 @@
                     </select>
                 </div>
 
+                <div class="tool-group" id="cloudModelSelectGroup" style="display: none;">
+                    <label for="cloudModelSelect">Model chmury:</label>
+                    <select id="cloudModelSelect">
+                        {% if cloud_models %}
+                            {% for model in cloud_models %}
+                                <option
+                                    value="{{ model.id }}"
+                                    data-provider="{{ model.provider }}"
+                                    data-provider-label="{{ model.provider_label }}"
+                                    data-display-name="{{ model.display_name }}"
+                                    {% if model.id == default_cloud_model_id %}selected{% endif %}
+                                >
+                                    {{ model.provider_label }} - {{ model.display_name }}
+                                </option>
+                            {% endfor %}
+                        {% else %}
+                            <option value="" selected disabled>Brak aktywnych modeli</option>
+                        {% endif %}
+                    </select>
+                </div>
+
                 <div class="tool-group" id="cloudBadgeGroup" style="display: none;">
-                    <div class="badge-cloud">✨ Silnik: Groq Cloud (Whisper V3)</div>
+                    <div class="badge-cloud" id="cloudBadge">Silnik: Chmura AI</div>
                 </div>
                 
                 <div class="divider"></div>
@@ -794,19 +816,40 @@
         
         const modeSwitch = document.getElementById('modeSwitch');
         const modelSelectGroup = document.getElementById('modelSelectGroup');
+        const cloudModelSelect = document.getElementById('cloudModelSelect');
+        const cloudModelSelectGroup = document.getElementById('cloudModelSelectGroup');
         const cloudBadgeGroup = document.getElementById('cloudBadgeGroup');
+        const cloudBadge = document.getElementById('cloudBadge');
 
         let cachedHistory = [];
 
-        modeSwitch.addEventListener('change', function() {
-            if(this.checked) {
+        function getSelectedCloudOption() {
+            if (!cloudModelSelect || cloudModelSelect.selectedIndex < 0) return null;
+            return cloudModelSelect.options[cloudModelSelect.selectedIndex];
+        }
+
+        function getSelectedCloudName() {
+            const option = getSelectedCloudOption();
+            if (!option || !option.value) return "Chmura AI";
+            return `${option.dataset.providerLabel} (${option.dataset.displayName})`;
+        }
+
+        function updateModeControls() {
+            if(modeSwitch.checked) {
                 modelSelectGroup.style.display = 'none';
+                cloudModelSelectGroup.style.display = 'flex';
                 cloudBadgeGroup.style.display = 'flex';
+                cloudBadge.textContent = `Silnik: ${getSelectedCloudName()}`;
             } else {
                 modelSelectGroup.style.display = 'flex';
+                cloudModelSelectGroup.style.display = 'none';
                 cloudBadgeGroup.style.display = 'none';
             }
-        });
+        }
+
+        modeSwitch.addEventListener('change', updateModeControls);
+        cloudModelSelect.addEventListener('change', updateModeControls);
+        updateModeControls();
 
         function setStatus(text, isLoading = false) {
             status.textContent = text;
@@ -824,14 +867,15 @@
         function startSmartCountdown(audioDurationSeconds) {
             clearInterval(countdownInterval);
             
-            // 1. Obsługa odliczania dla Chmury Groq (Timer zliczający sekundy w górę)
+            // 1. Obsługa odliczania dla modeli chmurowych
             if (modeSwitch.checked) {
                 let secondsElapsed = 0;
-                setStatus(`Wysyłanie danych do chmury Groq... (0s)`, true);
+                const cloudName = getSelectedCloudName();
+                setStatus(`Wysyłanie danych do ${cloudName}... (0s)`, true);
                 
                 countdownInterval = setInterval(() => {
                     secondsElapsed++;
-                    setStatus(`Przetwarzanie w chmurze Groq... (${secondsElapsed}s)`, true);
+                    setStatus(`Przetwarzanie w ${cloudName}... (${secondsElapsed}s)`, true);
                 }, 1000);
                 return;
             }
@@ -1118,12 +1162,9 @@
                 return;
             }
             toggleChatAccess(false);
-            
-            const customName = prompt("Podaj nazwę dla projektu YouTube w historii:", "Projekt YouTube");
-            if(customName) currentDocumentName = customName;
 
             startSmartCountdown(60); 
-            sendAudio(null, '', customName, ytUrl);
+            sendAudio(null, '', '', ytUrl);
         });
 
         chatSendBtn.addEventListener('click', async () => {
@@ -1154,11 +1195,19 @@
         });
 
         async function sendAudio(blob, filename, customName = "", youtubeUrl = "") {
+            const isTextOnly = filename && filename.toLowerCase().endsWith('.txt') && !youtubeUrl;
+            if (modeSwitch.checked && !isTextOnly && (!cloudModelSelect || !cloudModelSelect.value)) {
+                setStatus("Brak aktywnego modelu chmury", false);
+                alert("Dodaj aktywny model transkrypcji w ustawieniach.");
+                return;
+            }
+
             const formData = new FormData();
             if(blob) {
                 formData.append('file', blob, filename);
             }
             formData.append('model_name', modelSelect.value);
+            formData.append('cloud_model_id', cloudModelSelect ? cloudModelSelect.value : '');
             formData.append('language', languageSelect.value);
             formData.append('task', taskSelect.value);
             formData.append('custom_name', customName);
@@ -1179,6 +1228,9 @@
                 if (data.text) {
                     resultTextarea.value = data.text.trim();
                     aiNotesTextarea.value = data.notes ? data.notes.trim() : "Model AI nie zwrócił analizy.";
+                    if (data.saved_name) {
+                        currentDocumentName = data.saved_name;
+                    }
                     
                     if(data.record_id) {
                         activeRecordId = data.record_id;

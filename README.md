@@ -10,8 +10,8 @@ Aplikacja webowa typu **SaaS** zbudowana we **Flasku**, która pozwala na **reje
 * **Panel Historii Nagrań:** Integracja bazy danych z bocznym panelem (Sidebar), który pozwala przeglądać listę zapisanych nagrań pod własnymi nazwami, wczytywać archiwalne transkrypcje oraz trwale je usuwać.
 * **Hybrydowa Transkrypcja (STT):** Zamiana **mowy na tekst** w dwóch trybach do wyboru:
   * **Lokalnie:** Przy użyciu modeli **OpenAI Whisper** (*Tiny*, *Base*, *Small*).
-  * **W chmurze:** Błyskawiczne przetwarzanie sieciowe za pomocą zewnętrznego API **Groq Cloud (Whisper V3)**.
-* **Inteligentny Timer i Odliczanie:** Interfejs automatycznie kalkuluje czas oczekiwania. Dla chmury Groq uruchamia stoper zliczający sekundy w górę, a dla modeli lokalnych (w tym zoptymalizowanego modelu `base`) precyzyjnie wylicza czas na podstawie długości pliku audio za pomocą zaawansowanych mnożników.
+  * **W chmurze:** Przetwarzanie sieciowe przez modele skonfigurowane w ustawieniach, m.in. **Groq** oraz **OpenAI**.
+* **Inteligentny Timer i Odliczanie:** Interfejs automatycznie kalkuluje czas oczekiwania. Dla modeli chmurowych uruchamia stoper zliczający sekundy w górę, a dla modeli lokalnych (w tym zoptymalizowanego modelu `base`) precyzyjnie wylicza czas na podstawie długości pliku audio za pomocą zaawansowanych mnożników.
 * **Obsługa Różnych Źródeł Danych:** Możliwość nagrywania z mikrofonu (z funkcją pauzy i wznawiania), przesyłania gotowych plików audio/tekstowych z dysku oraz **automatycznego pobierania i przetwarzania filmów z serwisu YouTube (URL)**.
 * **Wizualizator Audio Live:** Dynamiczny wykres falowy wbudowany w interfejs, reagujący w czasie rzeczywistym na głos z mikrofonu podczas nagrywania.
 * **Analiza AI (LLM):** Automatyczne **strukturyzowanie tekstu**, wyciąganie **wniosków** i zadań (**To-Do**) przy użyciu modelu **Llama 3** (uruchamianego lokalnie przez **Ollama**).
@@ -63,6 +63,14 @@ pip install torch --index-url [https://download.pytorch.org/whl/cpu](https://dow
 Krok 2 (Wszystkie systemy - instalacja pozostałych bibliotek):
 pip install -r requirements.txt
 ```
+**2.1 Konfiguracja kluczy API w pliku `.env`**
+<br>Tryb chmurowy korzysta z kluczy zapisanych w lokalnym pliku `.env`:
+
+```env
+GROQ_API_KEY=twoj_klucz_groq
+OPENAI_API_KEY=twoj_klucz_openai
+```
+
 **3. Konfiguracja modeli AI (Ollama)
 Upewnij się, że masz zainstalowaną aplikację Ollama oraz pobrany odpowiedni model językowy:
 ```Bash
@@ -74,7 +82,7 @@ Odpal serwer deweloperski Flaska:
 ```Bash
 python app.py
 ```
-Aplikacja domyślnie zacznie działać lokalnie na porcie 8000 (http://127.0.0.1:8000).
+Aplikacja domyślnie zacznie działać lokalnie na porcie 8000 (http://127.0.0.1:8000). Jeśli port 8000 jest zajęty, serwer automatycznie wybierze kolejny wolny port.
 
  Przykładowy Scenariusz Testowy
 Aby przetestować pełne możliwości systemu, zaloguj się, kliknij przycisk nagrywania i przeczytaj na głos poniższy tekst:
