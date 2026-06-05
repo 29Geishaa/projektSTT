@@ -5,4 +5,8 @@ temp_*
 venv
 .env
 users.db
-temp_uploads
+temp_uploads/
+.agents/
+.claude/
+.codex/
+.prodready/
