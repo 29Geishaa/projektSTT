@@ -1,6 +1,7 @@
 import os
 import argparse
 import logging
+import json
 import sqlite3
 import re
 import io
@@ -9,7 +10,8 @@ import shutil
 import socket
 import glob
 import uuid
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
+from datetime import datetime, timezone
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file, g, has_request_context
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import ollama
@@ -78,6 +80,7 @@ LOCAL_MODELS_ENABLED = not STARTUP_ARGS.no_local_models
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini').strip() or 'gpt-4o-mini'
 OPENAI_WEB_SEARCH_MODEL = os.getenv('OPENAI_WEB_SEARCH_MODEL', OPENAI_MODEL).strip() or OPENAI_MODEL
 OPENAI_TRANSCRIBE_MODEL = os.getenv('OPENAI_TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe').strip() or 'gpt-4o-mini-transcribe'
+OPENAI_USAGE_HISTORY_FILE = os.path.join(BASE_DIR, 'openai_usage_history.jsonl')
 
 PROVIDERS = {
     "groq": {
@@ -325,6 +328,164 @@ def require_provider_api_key(provider):
         env_key = get_provider_env_key(provider)
         raise RuntimeError(f"Brak klucza {env_key} w pliku .env")
     return api_key
+
+def to_plain_data(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): to_plain_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_plain_data(item) for item in value]
+    if hasattr(value, "model_dump"):
+        return to_plain_data(value.model_dump())
+    if hasattr(value, "to_dict"):
+        return to_plain_data(value.to_dict())
+    if hasattr(value, "__dict__"):
+        data = {
+            key: to_plain_data(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+        if data:
+            return data
+
+    public_attrs = {}
+    for attr_name in dir(value):
+        if attr_name.startswith("_"):
+            continue
+        try:
+            attr_value = getattr(value, attr_name)
+        except Exception:
+            continue
+        if callable(attr_value):
+            continue
+        if isinstance(attr_value, (str, int, float, bool, dict, list, tuple)) or attr_value is None:
+            public_attrs[attr_name] = to_plain_data(attr_value)
+    if public_attrs:
+        return public_attrs
+
+    return str(value)
+
+def get_openai_response_payload(response):
+    if response is None:
+        return {}
+    if isinstance(response, dict):
+        return to_plain_data(response)
+    if hasattr(response, "json") and callable(response.json):
+        try:
+            return to_plain_data(response.json())
+        except ValueError:
+            return {}
+    return to_plain_data(response)
+
+def read_field(source, *path):
+    current = source
+    for key in path:
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            current = getattr(current, key, None)
+    return current
+
+def first_available(source, paths):
+    for path in paths:
+        value = read_field(source, *path)
+        if value is not None:
+            return value
+    return None
+
+def first_available_from_sources(sources, paths):
+    for source in sources:
+        value = first_available(source, paths)
+        if value is not None:
+            return value
+    return None
+
+def extract_openai_usage(response, operation_name):
+    payload = get_openai_response_payload(response)
+    sources = [payload, response]
+    usage = first_available_from_sources(sources, [("usage",)])
+    usage_data = to_plain_data(usage) if usage is not None else None
+
+    input_tokens = first_available_from_sources(sources, [
+        ("usage", "input_tokens"),
+        ("usage", "prompt_tokens")
+    ])
+    output_tokens = first_available_from_sources(sources, [
+        ("usage", "output_tokens"),
+        ("usage", "completion_tokens")
+    ])
+    total_tokens = first_available_from_sources(sources, [
+        ("usage", "total_tokens")
+    ])
+    cached_tokens = first_available_from_sources(sources, [
+        ("usage", "cached_tokens"),
+        ("usage", "input_tokens_details", "cached_tokens"),
+        ("usage", "prompt_tokens_details", "cached_tokens")
+    ])
+    reasoning_tokens = first_available_from_sources(sources, [
+        ("usage", "reasoning_tokens"),
+        ("usage", "output_tokens_details", "reasoning_tokens"),
+        ("usage", "completion_tokens_details", "reasoning_tokens")
+    ])
+    usage_type = first_available_from_sources(sources, [("usage", "type")])
+    seconds = first_available_from_sources(sources, [("usage", "seconds")])
+
+    return {
+        "datetime": datetime.now(timezone.utc).isoformat(),
+        "operation": operation_name,
+        "model": first_available_from_sources(sources, [("model",)]),
+        "response_id": first_available_from_sources(sources, [("id",)]),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "cached_tokens": cached_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "usage_type": usage_type,
+        "seconds": seconds,
+        "usage": usage_data
+    }
+
+def get_current_openai_usage_history():
+    if not has_request_context():
+        return []
+    return list(getattr(g, "openai_usage_history", []))
+
+def append_openai_usage_to_request(record):
+    if not has_request_context():
+        return
+    if not hasattr(g, "openai_usage_history"):
+        g.openai_usage_history = []
+    g.openai_usage_history.append(record)
+
+def append_openai_usage_to_file(record):
+    with open(OPENAI_USAGE_HISTORY_FILE, "a", encoding="utf-8") as usage_file:
+        usage_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+def record_openai_usage(response, operation_name):
+    record = extract_openai_usage(response, operation_name)
+    append_openai_usage_to_request(record)
+    try:
+        append_openai_usage_to_file(record)
+    except Exception:
+        app.logger.exception("Nie udało się zapisać historii użycia OpenAI")
+    return record
+
+def serialize_openai_usage_history(records):
+    if not records:
+        return ""
+    return json.dumps(records, ensure_ascii=False)
+
+def parse_openai_usage_history(value):
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 def raise_invalid_api_key_error(provider):
     env_key = get_provider_env_key(provider)
@@ -588,7 +749,9 @@ def transcribe_with_cloud(model_config, file_path, language):
                 timeout=180
             )
             raise_for_openai_error(response)
-            return response.json().get("text", "")
+            payload = response.json()
+            record_openai_usage(payload, "transcription")
+            return payload.get("text", "")
 
     raise RuntimeError(f"Nieobsługiwany provider: {provider}")
 
@@ -628,6 +791,7 @@ def chat_with_cloud(messages, model_config):
         )
         raise_for_openai_error(response)
         payload = response.json()
+        record_openai_usage(payload, "analysis")
         return payload["choices"][0]["message"]["content"]
 
     raise RuntimeError(f"Nieobsługiwany provider: {provider}")
@@ -687,7 +851,7 @@ def messages_to_responses_input(messages):
 
     return "\n\n".join(prompt_parts)
 
-def create_openai_responses(model_id, input_text, tools=None, include=None, timeout=180):
+def create_openai_responses(model_id, input_text, tools=None, include=None, timeout=180, operation_name="analysis"):
     api_key = require_provider_api_key("openai")
     payload = {
         "model": model_id,
@@ -710,13 +874,16 @@ def create_openai_responses(model_id, input_text, tools=None, include=None, time
         timeout=timeout
     )
     raise_for_openai_error(response)
-    return response.json()
+    payload = response.json()
+    record_openai_usage(payload, operation_name)
+    return payload
 
 def chat_with_openai_responses(messages, model_config):
     payload = create_openai_responses(
         model_config["model_id"],
         messages_to_responses_input(messages),
-        timeout=180
+        timeout=180,
+        operation_name="analysis"
     )
     output_text = extract_responses_output_text(payload)
     if not output_text:
@@ -757,7 +924,8 @@ def analyze_with_web_search(yt_response_prompt, model_config=None):
             }
         ],
         include=["web_search_call.action.sources"],
-        timeout=240
+        timeout=240,
+        operation_name="web_search_analysis"
     )
 
     output_text = extract_responses_output_text(payload)
@@ -1017,12 +1185,22 @@ def process_audio_transcription(file_path, processing_mode='offline', model_name
         "model_used": f"Lokalny Whisper ({model_name})"
     }
 
-def save_transcription_history(user_email, display_title, raw_text, notes, notes_model_used=""):
+def save_transcription_history(user_email, display_title, raw_text, notes, notes_model_used="", openai_usage_history=None):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO history (user_email, filename, raw_text, ai_notes, notes_model_used) VALUES (?, ?, ?, ?, ?)",
-        (user_email, display_title, raw_text.strip(), notes.strip(), str(notes_model_used or "").strip())
+        """
+        INSERT INTO history (user_email, filename, raw_text, ai_notes, notes_model_used, openai_usage_history)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_email,
+            display_title,
+            raw_text.strip(),
+            notes.strip(),
+            str(notes_model_used or "").strip(),
+            serialize_openai_usage_history(openai_usage_history)
+        )
     )
     record_id = cursor.lastrowid
     conn.commit()
@@ -1141,6 +1319,7 @@ def init_db():
             raw_text TEXT NOT NULL,
             ai_notes TEXT NOT NULL,
             notes_model_used TEXT DEFAULT '',
+            openai_usage_history TEXT DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_email) REFERENCES users(email)
         )
@@ -1149,6 +1328,8 @@ def init_db():
     history_columns = {row[1] for row in cursor.fetchall()}
     if "notes_model_used" not in history_columns:
         cursor.execute("ALTER TABLE history ADD COLUMN notes_model_used TEXT DEFAULT ''")
+    if "openai_usage_history" not in history_columns:
+        cursor.execute("ALTER TABLE history ADD COLUMN openai_usage_history TEXT DEFAULT ''")
 
     # NOWA TABELA: Pamięć czatu (Prawdziwa rozmowa)
     cursor.execute('''
@@ -1158,6 +1339,7 @@ def init_db():
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             model_used TEXT DEFAULT '',
+            openai_usage_history TEXT DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(record_id) REFERENCES history(id) ON DELETE CASCADE
         )
@@ -1166,6 +1348,8 @@ def init_db():
     chat_history_columns = {row[1] for row in cursor.fetchall()}
     if "model_used" not in chat_history_columns:
         cursor.execute("ALTER TABLE chat_history ADD COLUMN model_used TEXT DEFAULT ''")
+    if "openai_usage_history" not in chat_history_columns:
+        cursor.execute("ALTER TABLE chat_history ADD COLUMN openai_usage_history TEXT DEFAULT ''")
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS ai_models (
@@ -1536,7 +1720,15 @@ def transcribe():
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-        new_id = save_transcription_history(session['user_email'], display_title, surowy_tekst, notatki_ai, notes_model_used)
+        openai_usage_history = get_current_openai_usage_history()
+        new_id = save_transcription_history(
+            session['user_email'],
+            display_title,
+            surowy_tekst,
+            notatki_ai,
+            notes_model_used,
+            openai_usage_history
+        )
 
         return jsonify({
             "text": surowy_tekst, 
@@ -1546,7 +1738,8 @@ def transcribe():
             "language": detected_lang,
             "task": task,
             "saved_name": display_title,
-            "record_id": new_id
+            "record_id": new_id,
+            "openai_usage_history": openai_usage_history
         })
 
     except ValueError as e:
@@ -1636,13 +1829,15 @@ def api_youtube_transcribe():
 
         saved_name = custom_name if custom_name else f"YT: {youtube_download['title']}"
         record_id = None
+        openai_usage_history = get_current_openai_usage_history()
         if save_to_history:
             record_id = save_transcription_history(
                 session['user_email'],
                 saved_name,
                 transcription_result["text"],
                 transcription_result["notes"],
-                transcription_result.get("notes_model_used", "")
+                transcription_result.get("notes_model_used", ""),
+                openai_usage_history
             )
 
         return jsonify({
@@ -1656,6 +1851,7 @@ def api_youtube_transcribe():
             "saved": record_id is not None,
             "saved_name": saved_name,
             "record_id": record_id,
+            "openai_usage_history": openai_usage_history,
             "youtube": {
                 "id": youtube_download["id"],
                 "title": youtube_download["title"],
@@ -1758,6 +1954,7 @@ def ask_question():
         )
         ai_answer = answer_question_with_ai(yt_response_prompt, chat_model)
         odpowiedz_ai = ai_answer["text"]
+        openai_usage_history = get_current_openai_usage_history()
         app.logger.info(
             "ask-question: ai request ok record_id=%s model=%s answer_len=%s sources_count=%s",
             record_id,
@@ -1771,8 +1968,17 @@ def ask_question():
         cursor = conn.cursor()
         cursor.execute("INSERT INTO chat_history (record_id, role, content) VALUES (?, ?, ?)", (record_id, 'user', question))
         cursor.execute(
-            "INSERT INTO chat_history (record_id, role, content, model_used) VALUES (?, ?, ?, ?)",
-            (record_id, 'assistant', odpowiedz_ai, ai_answer["engine"])
+            """
+            INSERT INTO chat_history (record_id, role, content, model_used, openai_usage_history)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                record_id,
+                'assistant',
+                odpowiedz_ai,
+                ai_answer["engine"],
+                serialize_openai_usage_history(openai_usage_history)
+            )
         )
         conn.commit()
         conn.close()
@@ -1782,7 +1988,8 @@ def ask_question():
             "answer": odpowiedz_ai,
             "engine": ai_answer["engine"],
             "chat_model_used": ai_answer["engine"],
-            "sources": ai_answer["sources"]
+            "sources": ai_answer["sources"],
+            "openai_usage_history": openai_usage_history
         })
     except Exception as e:
         app.logger.exception(
@@ -1802,7 +2009,7 @@ def get_history():
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, filename, raw_text, ai_notes, COALESCE(notes_model_used, ''), datetime(created_at, 'localtime')
+        SELECT id, filename, raw_text, ai_notes, COALESCE(notes_model_used, ''), COALESCE(openai_usage_history, ''), datetime(created_at, 'localtime')
         FROM history
         WHERE user_email = ?
         ORDER BY created_at DESC
@@ -1812,7 +2019,7 @@ def get_history():
     rows = cursor.fetchall()
     cursor.execute(
         """
-        SELECT ch.record_id, ch.role, ch.content, datetime(ch.created_at, 'localtime'), COALESCE(ch.model_used, '')
+        SELECT ch.record_id, ch.role, ch.content, datetime(ch.created_at, 'localtime'), COALESCE(ch.model_used, ''), COALESCE(ch.openai_usage_history, '')
         FROM chat_history ch
         JOIN history h ON h.id = ch.record_id
         WHERE h.user_email = ?
@@ -1824,12 +2031,13 @@ def get_history():
     conn.close()
 
     chat_by_record = {}
-    for record_id, role, content, created_at, model_used in chat_rows:
+    for record_id, role, content, created_at, model_used, openai_usage_history in chat_rows:
         chat_by_record.setdefault(record_id, []).append({
             "role": role,
             "content": content,
             "created_at": created_at,
-            "engine": model_used
+            "engine": model_used,
+            "openai_usage_history": parse_openai_usage_history(openai_usage_history)
         })
     
     history_list = []
@@ -1841,7 +2049,8 @@ def get_history():
             "raw_text": r[2],
             "ai_notes": r[3],
             "notes_model_used": r[4],
-            "created_at": r[5],
+            "openai_usage_history": parse_openai_usage_history(r[5]),
+            "created_at": r[6],
             "chat_messages": chat_messages,
             "chat_count": len(chat_messages)
         })

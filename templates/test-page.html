@@ -179,6 +179,33 @@
             border-color: var(--accent-purple);
         }
 
+        .toolbar .usage-summary-group {
+            flex: 0 1 auto;
+            min-width: 260px;
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .usage-summary-label {
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.2;
+            text-transform: uppercase;
+        }
+
+        .usage-summary {
+            color: var(--text-main);
+            font-size: 11px;
+            line-height: 1.35;
+            max-width: 620px;
+        }
+
+        .usage-summary.is-empty {
+            color: var(--text-muted);
+        }
+
         label {
             font-size: 13px;
             color: var(--text-muted);
@@ -367,6 +394,23 @@
             letter-spacing: 0;
         }
 
+        .usage-info {
+            display: none;
+            color: var(--text-muted);
+            font-size: 11px;
+            line-height: 1.35;
+            margin-top: -2px;
+        }
+
+        .usage-info.visible {
+            display: block;
+        }
+
+        .usage-info strong {
+            color: var(--text-main);
+            font-weight: 600;
+        }
+
         .export-btn-group {
             display: flex;
             gap: 5px;
@@ -456,6 +500,10 @@
             color: var(--text-muted);
             font-size: 11px;
             line-height: 1.35;
+            max-width: 220px;
+        }
+
+        .chat-action-wrapper .usage-info {
             max-width: 220px;
         }
 
@@ -623,6 +671,7 @@
         .chat-message-meta {
             display: flex;
             justify-content: space-between;
+            flex-wrap: wrap;
             gap: 12px;
             margin-bottom: 5px;
             color: var(--text-muted);
@@ -928,6 +977,13 @@
                     <button id="ytProcessBtn" class="btn btn-danger" style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger); color: #f87171;">Przetwórz YT</button>
                 </div>
 
+                <div class="divider"></div>
+
+                <div class="tool-group usage-summary-group">
+                    <span class="usage-summary-label">Zużycie OpenAI</span>
+                    <span id="usageSummary" class="usage-summary is-empty" aria-live="polite">Brak danych</span>
+                </div>
+
                 <div style="margin-left: auto;" class="status-container">
                     <div id="spinner" class="spinner"></div>
                     <span id="status">Gotowy</span>
@@ -939,18 +995,6 @@
             </div>
 
             <div class="results-wrapper">
-                <div class="result-box">
-                    <div class="result-box-header">
-                        <h3>✨ Podsumowanie i Notatki AI (<span id="notesModelLabel" class="notes-model-name">{{ initial_notes_model_label }}</span>)</h3>
-                        <div class="export-btn-group">
-                            <button onclick="exportData('txt', 'aiNotes')" class="btn btn-secondary btn-xs">TXT</button>
-                            <button onclick="exportData('docx', 'aiNotes')" class="btn btn-secondary btn-xs">Word</button>
-                            <button onclick="exportData('pdf', 'aiNotes')" class="btn btn-secondary btn-xs">PDF</button>
-                        </div>
-                    </div>
-                    <textarea id="aiNotes" class="ai-notes-area" readonly placeholder="Tutaj pojawi się ustrukturyzowana notatka z nagrania stworzona przez AI..."></textarea>
-                </div>
-                
                 <div class="result-box" id="transcriptionBox">
                     <div class="result-box-header">
                         <h3 class="toggle-header" id="transcriptionToggle" role="button" tabindex="0" aria-controls="result" aria-expanded="false">📝 Pełna Transkrypcja (Surowy tekst)</h3>
@@ -960,8 +1004,23 @@
                             <button onclick="exportData('pdf', 'result')" class="btn btn-secondary btn-xs">PDF</button>
                         </div>
                     </div>
+                    <div id="transcriptionUsageInfo" class="usage-info"></div>
                     <textarea id="result" class="is-collapsible" placeholder="Tutaj pojawi się pełny, surowy tekst z nagrania..."></textarea>
                 </div>
+
+                <div class="result-box">
+                    <div class="result-box-header">
+                        <h3>✨ Podsumowanie i Notatki AI (<span id="notesModelLabel" class="notes-model-name">{{ initial_notes_model_label }}</span>)</h3>
+                        <div class="export-btn-group">
+                            <button onclick="exportData('txt', 'aiNotes')" class="btn btn-secondary btn-xs">TXT</button>
+                            <button onclick="exportData('docx', 'aiNotes')" class="btn btn-secondary btn-xs">Word</button>
+                            <button onclick="exportData('pdf', 'aiNotes')" class="btn btn-secondary btn-xs">PDF</button>
+                        </div>
+                    </div>
+                    <div id="notesUsageInfo" class="usage-info"></div>
+                    <textarea id="aiNotes" class="ai-notes-area" readonly placeholder="Tutaj pojawi się ustrukturyzowana notatka z nagrania stworzona przez AI..."></textarea>
+                </div>
+                
             </div>
 
             <div class="chat-section">
@@ -992,6 +1051,7 @@
                             {% endif %}
                         </select>
                         <div id="chatModelInfo" class="chat-model-info">Wybrany: {{ default_chat_model_label }}</div>
+                        <div id="chatUsageInfo" class="usage-info"></div>
                     </div>
                 </div>
                 <div id="chatResponse" class="chat-response-box"></div>
@@ -1025,6 +1085,7 @@
         let currentDocumentName = "Transkrypcja"; 
         let activeRecordId = null;
         let activeChatMessages = [];
+        let activeOpenAiUsageHistory = [];
         const localModelsEnabled = {{ 'true' if local_models_enabled else 'false' }};
         const localNotesModelLabel = {{ local_notes_model_label|tojson }};
         const defaultCloudNotesModelLabel = {{ default_cloud_notes_model_label|tojson }};
@@ -1039,9 +1100,12 @@
         const ytProcessBtn = document.getElementById('ytProcessBtn');
         const status = document.getElementById('status');
         const spinner = document.getElementById('spinner');
+        const usageSummary = document.getElementById('usageSummary');
         const resultTextarea = document.getElementById('result');
         const aiNotesTextarea = document.getElementById('aiNotes');
         const notesModelLabel = document.getElementById('notesModelLabel');
+        const notesUsageInfo = document.getElementById('notesUsageInfo');
+        const transcriptionUsageInfo = document.getElementById('transcriptionUsageInfo');
         const transcriptionBox = document.getElementById('transcriptionBox');
         const transcriptionToggle = document.getElementById('transcriptionToggle');
         const modelSelect = document.getElementById('modelSelect');
@@ -1055,6 +1119,7 @@
         const chatResponse = document.getElementById('chatResponse');
         const chatModelSelect = document.getElementById('chatModelSelect');
         const chatModelInfo = document.getElementById('chatModelInfo');
+        const chatUsageInfo = document.getElementById('chatUsageInfo');
 
         const historySidebar = document.getElementById('historySidebar');
         const openHistoryBtn = document.getElementById('openHistoryBtn');
@@ -1165,6 +1230,340 @@
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#039;');
+        }
+
+        function readUsagePath(source, path) {
+            let current = source;
+            for (const key of path) {
+                if (current === null || current === undefined) {
+                    return null;
+                }
+                current = current[key];
+            }
+            return current === undefined ? null : current;
+        }
+
+        function getUsageValue(record, paths) {
+            for (const path of paths) {
+                const value = readUsagePath(record, path);
+                if (value !== null && value !== undefined && value !== "") {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        function normalizeUsageNumber(value) {
+            if (value === null || value === undefined || value === "") {
+                return null;
+            }
+
+            const numericValue = Number(value);
+            return Number.isFinite(numericValue) ? numericValue : null;
+        }
+
+        function formatUsageNumber(value) {
+            const numericValue = normalizeUsageNumber(value);
+            return numericValue === null ? "" : numericValue.toLocaleString('pl-PL');
+        }
+
+        function formatUsageDuration(seconds) {
+            const numericSeconds = normalizeUsageNumber(seconds);
+            if (numericSeconds === null) {
+                return "";
+            }
+
+            if (numericSeconds >= 60) {
+                const minutes = Math.floor(numericSeconds / 60);
+                const remainingSeconds = Math.round(numericSeconds % 60);
+                return `${minutes}m ${remainingSeconds}s`;
+            }
+
+            return `${numericSeconds.toLocaleString('pl-PL', { maximumFractionDigits: 1 })}s`;
+        }
+
+        function formatOpenAiUsage(record) {
+            if (!record || typeof record !== "object") {
+                return "";
+            }
+
+            const totalTokens = getUsageValue(record, [["total_tokens"], ["usage", "total_tokens"]]);
+            const inputTokens = getUsageValue(record, [["input_tokens"], ["usage", "input_tokens"], ["usage", "prompt_tokens"]]);
+            const outputTokens = getUsageValue(record, [["output_tokens"], ["usage", "output_tokens"], ["usage", "completion_tokens"]]);
+            const cachedTokens = getUsageValue(record, [
+                ["cached_tokens"],
+                ["usage", "cached_tokens"],
+                ["usage", "input_tokens_details", "cached_tokens"],
+                ["usage", "prompt_tokens_details", "cached_tokens"]
+            ]);
+            const reasoningTokens = getUsageValue(record, [
+                ["reasoning_tokens"],
+                ["usage", "reasoning_tokens"],
+                ["usage", "output_tokens_details", "reasoning_tokens"],
+                ["usage", "completion_tokens_details", "reasoning_tokens"]
+            ]);
+            const seconds = getUsageValue(record, [["seconds"], ["usage", "seconds"], ["usage", "audio_seconds"], ["usage", "duration"]]);
+            const model = getUsageValue(record, [["model"]]);
+
+            const segments = [];
+            const totalText = formatUsageNumber(totalTokens);
+            const inputText = formatUsageNumber(inputTokens);
+            const outputText = formatUsageNumber(outputTokens);
+            const cachedText = formatUsageNumber(cachedTokens);
+            const reasoningText = formatUsageNumber(reasoningTokens);
+            const detailSegments = [];
+
+            if (inputText) detailSegments.push(`wejście: ${inputText}`);
+            if (outputText) detailSegments.push(`wyjście: ${outputText}`);
+            if (cachedText) detailSegments.push(`cache: ${cachedText}`);
+            if (reasoningText) detailSegments.push(`reasoning: ${reasoningText}`);
+
+            if (totalText) {
+                segments.push(`Tokeny: ${totalText}${detailSegments.length ? ` (${detailSegments.join(", ")})` : ""}`);
+            } else if (detailSegments.length) {
+                segments.push(`Tokeny: ${detailSegments.join(", ")}`);
+            }
+
+            const secondsText = formatUsageDuration(seconds);
+            if (secondsText) {
+                segments.push(`Audio: ${secondsText}`);
+            }
+
+            if (segments.length === 0) {
+                return "";
+            }
+
+            if (model) {
+                segments.push(`Model: ${model}`);
+            }
+
+            return segments.join(" | ");
+        }
+
+        function findLastOpenAiUsage(history, operations) {
+            if (!Array.isArray(history)) {
+                return null;
+            }
+
+            const operationSet = new Set(operations);
+            for (let index = history.length - 1; index >= 0; index--) {
+                const record = history[index];
+                if (!record || !operationSet.has(record.operation)) {
+                    continue;
+                }
+                if (formatOpenAiUsage(record)) {
+                    return record;
+                }
+            }
+
+            return null;
+        }
+
+        function getUsageMetrics(record) {
+            const inputTokens = normalizeUsageNumber(getUsageValue(record, [
+                ["input_tokens"],
+                ["usage", "input_tokens"],
+                ["usage", "prompt_tokens"]
+            ]));
+            const outputTokens = normalizeUsageNumber(getUsageValue(record, [
+                ["output_tokens"],
+                ["usage", "output_tokens"],
+                ["usage", "completion_tokens"]
+            ]));
+            const totalTokens = normalizeUsageNumber(getUsageValue(record, [
+                ["total_tokens"],
+                ["usage", "total_tokens"]
+            ]));
+            const cachedTokens = normalizeUsageNumber(getUsageValue(record, [
+                ["cached_tokens"],
+                ["usage", "cached_tokens"],
+                ["usage", "input_tokens_details", "cached_tokens"],
+                ["usage", "prompt_tokens_details", "cached_tokens"]
+            ]));
+            const reasoningTokens = normalizeUsageNumber(getUsageValue(record, [
+                ["reasoning_tokens"],
+                ["usage", "reasoning_tokens"],
+                ["usage", "output_tokens_details", "reasoning_tokens"],
+                ["usage", "completion_tokens_details", "reasoning_tokens"]
+            ]));
+            const audioSeconds = normalizeUsageNumber(getUsageValue(record, [
+                ["seconds"],
+                ["usage", "seconds"],
+                ["usage", "audio_seconds"],
+                ["usage", "duration"]
+            ]));
+            const hasTokenUsage = [inputTokens, outputTokens, totalTokens, cachedTokens, reasoningTokens].some((value) => value !== null);
+            const hasAudioUsage = audioSeconds !== null;
+
+            return {
+                inputTokens: inputTokens || 0,
+                outputTokens: outputTokens || 0,
+                totalTokens: totalTokens !== null ? totalTokens : ((inputTokens || 0) + (outputTokens || 0)),
+                cachedTokens: cachedTokens || 0,
+                reasoningTokens: reasoningTokens || 0,
+                audioSeconds: audioSeconds || 0,
+                hasTokenUsage,
+                hasAudioUsage
+            };
+        }
+
+        function getChatUsageRecords(messages) {
+            if (!Array.isArray(messages)) {
+                return [];
+            }
+
+            return messages.flatMap((message) => (
+                Array.isArray(message.openai_usage_history) ? message.openai_usage_history : []
+            ));
+        }
+
+        function aggregateOpenAiUsage(records) {
+            const summary = {
+                records: 0,
+                tokenRecords: 0,
+                audioRecords: 0,
+                totalTokens: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+                cachedTokens: 0,
+                reasoningTokens: 0,
+                audioSeconds: 0
+            };
+
+            if (!Array.isArray(records)) {
+                return summary;
+            }
+
+            records.forEach((record) => {
+                if (!record || typeof record !== "object") {
+                    return;
+                }
+
+                const metrics = getUsageMetrics(record);
+                if (!metrics.hasTokenUsage && !metrics.hasAudioUsage) {
+                    return;
+                }
+
+                summary.records += 1;
+
+                if (metrics.hasTokenUsage) {
+                    summary.tokenRecords += 1;
+                    summary.totalTokens += metrics.totalTokens;
+                    summary.inputTokens += metrics.inputTokens;
+                    summary.outputTokens += metrics.outputTokens;
+                    summary.cachedTokens += metrics.cachedTokens;
+                    summary.reasoningTokens += metrics.reasoningTokens;
+                }
+
+                if (metrics.hasAudioUsage) {
+                    summary.audioRecords += 1;
+                    summary.audioSeconds += metrics.audioSeconds;
+                }
+            });
+
+            return summary;
+        }
+
+        function formatOpenAiUsageSummary(summary) {
+            if (!summary || summary.records === 0) {
+                return "Brak danych";
+            }
+
+            const segments = [];
+            if (summary.tokenRecords > 0) {
+                segments.push(`Tokeny: ${formatUsageNumber(summary.totalTokens)}`);
+                segments.push(`wejście: ${formatUsageNumber(summary.inputTokens)}`);
+                segments.push(`wyjście: ${formatUsageNumber(summary.outputTokens)}`);
+                segments.push(`cache: ${formatUsageNumber(summary.cachedTokens)}`);
+                segments.push(`reasoning: ${formatUsageNumber(summary.reasoningTokens)}`);
+            }
+
+            if (summary.audioRecords > 0) {
+                segments.push(`audio: ${formatUsageDuration(summary.audioSeconds)}`);
+            }
+
+            return segments.join(" | ");
+        }
+
+        function getCurrentOpenAiUsageRecords() {
+            return [
+                ...(Array.isArray(activeOpenAiUsageHistory) ? activeOpenAiUsageHistory : []),
+                ...getChatUsageRecords(activeChatMessages)
+            ];
+        }
+
+        function updateUsageSummary() {
+            if (!usageSummary) {
+                return;
+            }
+
+            const summary = aggregateOpenAiUsage(getCurrentOpenAiUsageRecords());
+            usageSummary.textContent = formatOpenAiUsageSummary(summary);
+            usageSummary.classList.toggle('is-empty', summary.records === 0);
+        }
+
+        function setActiveOpenAiUsageHistory(history) {
+            activeOpenAiUsageHistory = Array.isArray(history) ? history : [];
+            updateTranscriptionUsage(activeOpenAiUsageHistory);
+            updateNotesUsage(activeOpenAiUsageHistory);
+            updateUsageSummary();
+        }
+
+        function setUsageInfo(element, record) {
+            if (!element) {
+                return;
+            }
+
+            const usageText = formatOpenAiUsage(record);
+            if (!usageText) {
+                element.textContent = "";
+                element.classList.remove('visible');
+                return;
+            }
+
+            element.textContent = `Zużycie OpenAI: ${usageText}`;
+            element.classList.add('visible');
+        }
+
+        function clearUsageInfo(element) {
+            setUsageInfo(element, null);
+        }
+
+        function updateTranscriptionUsage(history) {
+            setUsageInfo(transcriptionUsageInfo, findLastOpenAiUsage(history, ['transcription']));
+        }
+
+        function updateNotesUsage(history) {
+            setUsageInfo(notesUsageInfo, findLastOpenAiUsage(history, ['analysis']));
+        }
+
+        function updateChatUsage(history) {
+            setUsageInfo(chatUsageInfo, findLastOpenAiUsage(history, ['web_search_analysis', 'analysis']));
+            updateUsageSummary();
+        }
+
+        function clearAllUsageInfo() {
+            activeOpenAiUsageHistory = [];
+            clearUsageInfo(transcriptionUsageInfo);
+            clearUsageInfo(notesUsageInfo);
+            clearUsageInfo(chatUsageInfo);
+            updateUsageSummary();
+        }
+
+        function getLastChatUsageFromMessages(messages) {
+            if (!Array.isArray(messages)) {
+                return null;
+            }
+
+            for (let index = messages.length - 1; index >= 0; index--) {
+                const message = messages[index];
+                const record = findLastOpenAiUsage(message.openai_usage_history, ['web_search_analysis', 'analysis']);
+                if (record) {
+                    return record;
+                }
+            }
+
+            return null;
         }
 
         function formatSourceLinks(sources) {
@@ -1351,6 +1750,10 @@
                 if (message.created_at) {
                     lines.push(`Czas: ${message.created_at}`);
                 }
+                const usageText = formatOpenAiUsage(findLastOpenAiUsage(message.openai_usage_history, ['web_search_analysis', 'analysis']));
+                if (usageText) {
+                    lines.push(`Zużycie OpenAI: ${usageText}`);
+                }
                 lines.push(String(message.content || "").trim());
                 if (Array.isArray(message.sources) && message.sources.length > 0) {
                     lines.push("Źródła:");
@@ -1448,6 +1851,10 @@
                 if (message.created_at) {
                     details.push(escapeHtml(message.created_at));
                 }
+                const usageText = formatOpenAiUsage(findLastOpenAiUsage(message.openai_usage_history, ['web_search_analysis', 'analysis']));
+                if (usageText) {
+                    details.push(escapeHtml(`Zużycie OpenAI: ${usageText}`));
+                }
                 const detailsHtml = details.length > 0 ? `<span>${details.join(' | ')}</span>` : "";
                 const content = isUser
                     ? `<div class="markdown-body"><p>${escapeHtml(message.content || "").replace(/\n/g, '<br>')}</p></div>`
@@ -1475,11 +1882,13 @@
             if (!chatHistoryHtml) {
                 chatResponse.style.display = 'none';
                 chatResponse.innerHTML = '';
+                updateUsageSummary();
                 return;
             }
 
             chatResponse.style.display = 'block';
             chatResponse.innerHTML = chatHistoryHtml;
+            updateUsageSummary();
         }
 
         function formatChatMessageCount(count) {
@@ -1516,6 +1925,8 @@
             if (!enable) {
                 activeChatMessages = [];
                 updateChatModelLabel();
+                clearUsageInfo(chatUsageInfo);
+                updateUsageSummary();
             }
         }
 
@@ -1650,11 +2061,13 @@
                 resultTextarea.value = item.raw_text;
                 aiNotesTextarea.value = item.ai_notes;
                 updateNotesModelLabel(item.notes_model_used || "Nie zapisano modelu");
+                setActiveOpenAiUsageHistory(item.openai_usage_history);
                 activeRecordId = item.id; 
                 toggleChatAccess(true);
                 populateChatInputFromAuthenticityPrompt();
                 showSavedChatHistory(item.chat_messages);
                 updateChatModelLabel(getLastChatModelUsed(item.chat_messages));
+                setUsageInfo(chatUsageInfo, getLastChatUsageFromMessages(item.chat_messages));
                 historySidebar.classList.remove('open');
                 setStatus(`Wczytano: ${item.filename}`, false);
             }
@@ -1920,9 +2333,11 @@
                         content: data.answer,
                         engine: chatModelUsed,
                         sources: Array.isArray(data.sources) ? data.sources : [],
+                        openai_usage_history: Array.isArray(data.openai_usage_history) ? data.openai_usage_history : [],
                         created_at: createdAt
                     });
                     updateChatModelLabel(chatModelUsed);
+                    updateChatUsage(data.openai_usage_history);
                     showSavedChatHistory(activeChatMessages);
                     chatInput.value = '';
                 } else {
@@ -1964,6 +2379,7 @@
             resultTextarea.value = "";
             aiNotesTextarea.value = "";
             updateNotesModelLabel();
+            clearAllUsageInfo();
             
             try {
                 const processingStartedAt = performance.now();
@@ -1980,6 +2396,7 @@
                     resultTextarea.value = data.text.trim();
                     aiNotesTextarea.value = data.notes ? data.notes.trim() : "Model AI nie zwrócił analizy.";
                     updateNotesModelLabel(data.notes_model_used);
+                    setActiveOpenAiUsageHistory(data.openai_usage_history);
                     if (data.saved_name) {
                         currentDocumentName = data.saved_name;
                     }
