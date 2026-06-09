@@ -1,4 +1,6 @@
 import os
+import argparse
+import logging
 import sqlite3
 import re
 import io
@@ -10,7 +12,6 @@ import uuid
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-import whisper
 import ollama
 from groq import Groq
 import requests
@@ -18,9 +19,29 @@ import yt_dlp
 
 from docx import Document
 from reportlab.lib.pagesizes import letter
+from reportlab.lib.utils import simpleSplit
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+
+def parse_startup_args():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        '--no-local-models',
+        '--skip-local-models',
+        '--disable-local-models',
+        action='store_true',
+        dest='no_local_models'
+    )
+    args, _ = parser.parse_known_args()
+    return args
+
+STARTUP_ARGS = parse_startup_args()
+
+if STARTUP_ARGS.no_local_models:
+    whisper = None
+else:
+    import whisper
 
 def load_env_file(path='.env'):
     if not os.path.exists(path):
@@ -45,6 +66,7 @@ def load_env_file(path='.env'):
 load_env_file()
 
 app = Flask(__name__)
+app.logger.setLevel(logging.INFO)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'super-tajny-klucz-do-sesji-praktyki')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -52,6 +74,10 @@ UPLOAD_FOLDER = os.path.join(BASE_DIR, 'temp_uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 DB_FILE = 'users.db'
+LOCAL_MODELS_ENABLED = not STARTUP_ARGS.no_local_models
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini').strip() or 'gpt-4o-mini'
+OPENAI_WEB_SEARCH_MODEL = os.getenv('OPENAI_WEB_SEARCH_MODEL', OPENAI_MODEL).strip() or OPENAI_MODEL
+OPENAI_TRANSCRIBE_MODEL = os.getenv('OPENAI_TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe').strip() or 'gpt-4o-mini-transcribe'
 
 PROVIDERS = {
     "groq": {
@@ -66,7 +92,8 @@ PROVIDERS = {
 
 MODEL_TYPES = {
     "transcription": "Transkrypcja",
-    "chat": "Czat i notatki AI"
+    "notes": "Notatki AI",    
+    "chat": "Czat z AI"    
 }
 
 MODEL_CATALOG = {
@@ -92,6 +119,11 @@ MODEL_CATALOG = {
             {"id": "gpt-4o-transcribe-diarize", "label": "GPT-4o transcribe diarize"}
         ],
         "chat": [
+            {"id": f"{OPENAI_WEB_SEARCH_MODEL}", "label": f"{OPENAI_WEB_SEARCH_MODEL} (z .env)"},
+            {"id": f"gpt-5.5", "label": f"GPT-5.5 - drogi model"},
+        ],
+        "notes": [
+            {"id": f"{OPENAI_MODEL}", "label": f"{OPENAI_MODEL} (z .env)"},
             {"id": "gpt-4o-mini", "label": "GPT-4o mini"},
             {"id": "gpt-4o", "label": "GPT-4o"},
             {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini"},
@@ -243,15 +275,29 @@ DEFAULT_AI_MODELS = [
     {
         "provider": "openai",
         "model_type": "transcription",
-        "display_name": "Whisper API",
+        "display_name": "Whisper-1 API",
         "model_id": "whisper-1",
         "is_default": 1
     },
     {
         "provider": "openai",
-        "model_type": "chat",
+        "model_type": "transcription",
+        "display_name": "Whisper GPT-4o-mini-transcribe",
+        "model_id": "gpt-4o-mini-transcribe",
+        "is_default": 1
+    },
+    {
+        "provider": "openai",
+        "model_type": "notes",
         "display_name": "GPT-4o mini",
         "model_id": "gpt-4o-mini",
+        "is_default": 1
+    },
+    {
+        "provider": "openai",
+        "model_type": "chat",
+        "display_name": "GPT-5.4",
+        "model_id": "gpt-5.4",
         "is_default": 1
     }
 ]
@@ -440,6 +486,52 @@ def get_selected_transcription_model(cloud_model_id):
         return selected_model
     return get_default_ai_model("transcription")
 
+def list_available_openai_chat_models():
+    return [
+        model
+        for model in list_ai_models(model_type="chat", enabled_only=True)
+        if model["provider"] == "openai" and model["has_api_key"]
+    ]
+
+def get_default_openai_chat_model():
+    openai_chat_models = list_available_openai_chat_models()
+    for model in openai_chat_models:
+        if model["is_default"]:
+            return model
+    return openai_chat_models[0] if openai_chat_models else None
+
+def get_selected_openai_chat_model(chat_model_id=None):
+    if chat_model_id:
+        selected_model = get_ai_model_by_id(chat_model_id, "chat")
+        if not selected_model or selected_model["provider"] != "openai" or not selected_model["has_api_key"]:
+            raise ValueError("Wybrany model czatu OpenAI nie jest dostępny.")
+        return selected_model
+
+    selected_model = get_default_openai_chat_model()
+    if selected_model:
+        return selected_model
+
+    raise ValueError("Brak dostępnego modelu OpenAI typu chat. Sprawdź ustawienia modeli i klucz OPENAI_API_KEY.")
+
+def promote_first_enabled_model_as_default(cursor, provider, model_type):
+    cursor.execute(
+        """
+        SELECT id FROM ai_models
+        WHERE provider = ? AND model_type = ? AND enabled = 1
+        ORDER BY id ASC
+        LIMIT 1
+        """,
+        (provider, model_type)
+    )
+    replacement = cursor.fetchone()
+    if not replacement:
+        return
+
+    cursor.execute(
+        "UPDATE ai_models SET is_default = 1 WHERE id = ?",
+        (replacement[0],)
+    )
+
 def raise_for_openai_error(response):
     if response.ok:
         return
@@ -502,7 +594,7 @@ def transcribe_with_cloud(model_config, file_path, language):
 
 def chat_with_cloud(messages, model_config):
     if not model_config:
-        raise RuntimeError("Brak aktywnego modelu czatu w ustawieniach")
+        raise RuntimeError("Brak aktywnego modelu AI w ustawieniach")
 
     provider = model_config["provider"]
     api_key = require_provider_api_key(provider)
@@ -517,6 +609,9 @@ def chat_with_cloud(messages, model_config):
             return completion.choices[0].message.content
         except Exception as error:
             raise_provider_api_error(provider, error)
+
+    if provider == "openai" and model_config.get("model_type") == "notes":
+        return chat_with_openai_responses(messages, model_config)
 
     if provider == "openai":
         response = requests.post(
@@ -537,10 +632,180 @@ def chat_with_cloud(messages, model_config):
 
     raise RuntimeError(f"Nieobsługiwany provider: {provider}")
 
+def extract_responses_output_text(payload):
+    if payload.get("output_text"):
+        return payload["output_text"]
+
+    chunks = []
+    for item in payload.get("output", []):
+        if item.get("type") != "message":
+            continue
+        for content in item.get("content", []):
+            text = content.get("text")
+            if text:
+                chunks.append(text)
+
+    return "\n".join(chunks).strip()
+
+def extract_responses_sources(payload):
+    sources = []
+    seen_urls = set()
+
+    def add_source(url, title=None):
+        if not url or url in seen_urls:
+            return
+        seen_urls.add(url)
+        sources.append({
+            "url": url,
+            "title": title or url
+        })
+
+    for item in payload.get("output", []):
+        if item.get("type") == "web_search_call":
+            action = item.get("action") or {}
+            for source in action.get("sources") or []:
+                add_source(source.get("url"), source.get("title"))
+
+        if item.get("type") == "message":
+            for content in item.get("content", []):
+                for annotation in content.get("annotations", []) or []:
+                    if annotation.get("type") == "url_citation":
+                        add_source(annotation.get("url"), annotation.get("title"))
+
+    return sources
+
+def messages_to_responses_input(messages):
+    role_labels = {
+        "system": "Instrukcje systemowe",
+        "user": "Użytkownik",
+        "assistant": "Asystent"
+    }
+    prompt_parts = []
+    for message in messages:
+        role = role_labels.get(message.get("role"), message.get("role", "Wiadomość"))
+        prompt_parts.append(f"{role}:\n{message.get('content', '')}")
+
+    return "\n\n".join(prompt_parts)
+
+def create_openai_responses(model_id, input_text, tools=None, include=None, timeout=180):
+    api_key = require_provider_api_key("openai")
+    payload = {
+        "model": model_id,
+        "input": input_text
+    }
+    if tools:
+        payload["tools"] = tools
+    if include:
+        payload["include"] = include
+    if tools:
+        payload["tool_choice"] = "auto"
+
+    response = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
+        json=payload,
+        timeout=timeout
+    )
+    raise_for_openai_error(response)
+    return response.json()
+
+def chat_with_openai_responses(messages, model_config):
+    payload = create_openai_responses(
+        model_config["model_id"],
+        messages_to_responses_input(messages),
+        timeout=180
+    )
+    output_text = extract_responses_output_text(payload)
+    if not output_text:
+        raise RuntimeError("OpenAI Responses API nie zwróciło tekstu odpowiedzi.")
+
+    return output_text
+
+def build_web_search_question_prompt(transcription, context_rows, question):
+    previous_messages = []
+    for role, content in context_rows:
+        speaker = "Użytkownik" if role == "user" else "Asystent"
+        previous_messages.append(f"{speaker}: {content}")
+
+    history_text = "\n".join(previous_messages) if previous_messages else "Brak wcześniejszej rozmowy."
+
+    return (
+        "Jesteś asystentem analizującym transkrypcję nagrania. Odpowiadaj po polsku.\n"
+        "Masz dostęp do narzędzia web_search. Używaj go wtedy, gdy pytanie wymaga aktualnych, "
+        "zewnętrznych lub weryfikowalnych informacji spoza transkrypcji. Jeśli odpowiedź wynika "
+        "wyłącznie z transkrypcji, oprzyj się na transkrypcji i jasno to zaznacz.\n"
+        "Nie zmyślaj faktów. Gdy korzystasz z internetu, podaj krótką odpowiedź i wskaż źródła.\n\n"
+        "Kontekst poprzedniej rozmowy:\n"
+        f"{history_text}\n\n"
+        "Transkrypcja nagrania:\n"
+        f"{transcription}\n\n"
+        "Pytanie użytkownika:\n"
+        f"{question}"
+    )
+
+def analyze_with_web_search(yt_response_prompt, model_config=None):
+    model_id = model_config["model_id"] if model_config else OPENAI_WEB_SEARCH_MODEL
+    payload = create_openai_responses(
+        model_id,
+        yt_response_prompt,
+        tools=[
+            {
+                "type": "web_search"
+            }
+        ],
+        include=["web_search_call.action.sources"],
+        timeout=240
+    )
+
+    output_text = extract_responses_output_text(payload)
+    if not output_text:
+        raise RuntimeError("OpenAI Responses API nie zwróciło tekstu odpowiedzi.")
+
+    return {
+        "text": output_text,
+        "sources": extract_responses_sources(payload),
+        "model": model_id,
+        "engine": f"{describe_cloud_model(model_config)} + web_search" if model_config else f"OpenAI Responses API ({model_id}) + web_search"
+    }
+
+def answer_question_with_ai(yt_response_prompt, model_config):
+    if not model_config:
+        raise RuntimeError("Brak aktywnego modelu czatu w ustawieniach")
+
+    if model_config["provider"] == "openai":
+        return analyze_with_web_search(yt_response_prompt, model_config)
+
+    answer_text = chat_with_cloud([{"role": "user", "content": yt_response_prompt}], model_config)
+    return {
+        "text": answer_text,
+        "sources": [],
+        "model": model_config["model_id"],
+        "engine": describe_chat_answer_model(model_config)
+    }
+
 def describe_cloud_model(model_config):
     if not model_config:
         return "Brak modelu"
     return f"{model_config['provider_label']} ({model_config['display_name']})"
+
+def describe_local_notes_model():
+    return "Ollama (Llama 3)"
+
+def describe_notes_model(model_config=None, processing_mode=None):
+    if model_config:
+        return describe_cloud_model(model_config)
+    if processing_mode == "online":
+        return "Brak modelu notatek"
+    return describe_local_notes_model()
+
+def describe_chat_answer_model(model_config):
+    label = describe_cloud_model(model_config)
+    if model_config and model_config.get("provider") == "openai":
+        return f"{label} + web_search"
+    return label
 
 def is_port_available(host, port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -635,6 +900,228 @@ def resolve_youtube_download_path(ydl, info, download_token):
 
     raise FileNotFoundError(f"Nie znaleziono pobranego pliku YouTube dla tokenu {download_token}")
 
+def download_youtube_audio(youtube_url):
+    download_token = uuid.uuid4().hex
+    ydl_opts = build_youtube_download_options(download_token)
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(youtube_url, download=True)
+        return {
+            "file_path": resolve_youtube_download_path(ydl, info, download_token),
+            "title": info.get("title", "YouTube Video"),
+            "id": info.get("id"),
+            "duration": info.get("duration"),
+            "webpage_url": info.get("webpage_url") or youtube_url
+        }
+
+def build_audio_notes_prompt(raw_text):
+    verification_json_format = (
+        '{\n'
+        '  "prompt": "Napisz dokłądny prompt dla modelu i opisz w nim dokładnie, jakie frazy i źródła należy sprawdzić, aby potwierdzić autentyczność tekstu.",\n'
+        '  "transcription": "Wstaw tutaj pełną transkrypcję do weryfikacji"\n'
+        '}'
+    )
+
+    return (
+        "Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst "
+        "pochodzący z nagrania audio i przygotuj z niego czytelną, ustrukturyzowaną "
+        "notatkę w języku polskim.\n"
+        "Notatka MUSI składać się z trzech wyraźnych sekcji:\n"
+        "1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję nagrania).\n"
+        "2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje i wątki wypisane od myślników).\n"
+        "3. LISTA ZADAŃ DO WYKONANIA (określenie zadań i akcji do podjęcia, jeśli o nich wspomniano).\n"
+        "4. Jeśli treść zawiera twierdzenia faktograficzne wymagające weryfikacji, dodaj sekcję "
+        "'PROMPT DO SPRAWDZENIA AUTENTYCZNOŚCI'. W tej sekcji opisz, jak przeszukać internet "
+        "i jakie źródła porównać, aby potwierdzić, czy tekst jest autentyczny i nie jest fake newsem.\n"
+        "   Sekcję 'PROMPT DO SPRAWDZENIA AUTENTYCZNOŚCI' przedstaw jako poprawny JSON w formacie:\n"
+        f"{verification_json_format}\n\n"
+        f"Oto tekst do przeanalizowania:\n{raw_text}"
+    )
+
+def generate_audio_notes(raw_text, processing_mode, preferred_provider=None):
+    if not raw_text.strip():
+        return "", None
+
+    prompt = build_audio_notes_prompt(raw_text)
+
+    if processing_mode == "online":
+        notes_model = get_default_ai_model("notes", preferred_provider=preferred_provider)
+        return chat_with_cloud([{"role": "user", "content": prompt}], notes_model), notes_model
+
+    try:
+        response = ollama.chat(model='llama3', messages=[{'role': 'user', 'content': prompt}])
+        return response['message']['content'], None
+    except Exception:
+        return "Nie udało się wygenerować notatek AI. Upewnij się, że Ollama działa w tle.", None
+
+def normalize_processing_mode(processing_mode):
+    mode = str(processing_mode or "offline").strip().lower()
+    if mode not in {"offline", "online"}:
+        raise ValueError("Nieobsługiwany tryb przetwarzania. Użyj 'offline' albo 'online'.")
+    return mode
+
+def get_default_processing_mode():
+    return "offline" if LOCAL_MODELS_ENABLED else "online"
+
+def process_audio_transcription(file_path, processing_mode='offline', model_name='base', cloud_model_id=None, language='auto', task='transcribe'):
+    processing_mode = normalize_processing_mode(processing_mode)
+    model_name = str(model_name or "base").strip()
+    language = str(language or "auto").strip()
+    task = str(task or "transcribe").strip()
+
+    if task not in {"transcribe", "translate"}:
+        raise ValueError("Nieobsługiwane zadanie. Użyj 'transcribe' albo 'translate'.")
+
+    if processing_mode == "online":
+        transcription_model = get_selected_transcription_model(cloud_model_id)
+        if not transcription_model:
+            raise ValueError("Brak aktywnego modelu transkrypcji w ustawieniach")
+
+        raw_text = transcribe_with_cloud(transcription_model, file_path, language)
+        notes, notes_model = generate_audio_notes(
+            raw_text,
+            processing_mode,
+            preferred_provider=transcription_model["provider"]
+        )
+
+        return {
+            "text": raw_text,
+            "notes": notes,
+            "notes_model_used": describe_notes_model(notes_model, processing_mode),
+            "language": language if language != "auto" else "auto",
+            "task": task,
+            "model_used": f"{describe_cloud_model(transcription_model)} + notatki: {describe_cloud_model(notes_model)}"
+        }
+
+    if not LOCAL_MODELS_ENABLED:
+        raise ValueError("Lokalne modele Whisper są wyłączone. Użyj trybu chmurowego albo uruchom aplikację bez parametru --no-local-models.")
+
+    if model_name not in models:
+        raise ValueError("Model lokalny nie jest obsługiwany")
+
+    model = models[model_name]
+    options = {"task": task, "fp16": False}
+    if language != "auto":
+        options["language"] = language
+
+    result = model.transcribe(file_path, **options)
+    raw_text = result["text"]
+    notes, _ = generate_audio_notes(raw_text, processing_mode)
+
+    return {
+        "text": raw_text,
+        "notes": notes,
+        "notes_model_used": describe_notes_model(None, processing_mode),
+        "language": result.get("language", language),
+        "task": task,
+        "model_used": f"Lokalny Whisper ({model_name})"
+    }
+
+def save_transcription_history(user_email, display_title, raw_text, notes, notes_model_used=""):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO history (user_email, filename, raw_text, ai_notes, notes_model_used) VALUES (?, ?, ?, ?, ?)",
+        (user_email, display_title, raw_text.strip(), notes.strip(), str(notes_model_used or "").strip())
+    )
+    record_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return record_id
+
+def get_payload_setting(payload, settings, key, default=None):
+    if key in settings:
+        return settings.get(key)
+    return payload.get(key, default)
+
+def parse_bool_setting(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "tak", "on"}
+    return bool(value)
+
+def build_local_model_list(model_type=None):
+    if not LOCAL_MODELS_ENABLED:
+        return []
+
+    requirements = {item["id"]: item for item in LOCAL_MODEL_REQUIREMENTS}
+    model_order = {"tiny": 1, "base": 2, "small": 3}
+    local_models = []
+
+    if model_type in (None, "transcription"):
+        for model_name in sorted(models.keys(), key=lambda name: model_order.get(name, 99)):
+            requirement = requirements.get(f"whisper-{model_name}", {})
+            local_models.append({
+                "source": "local",
+                "id": model_name,
+                "model_id": model_name,
+                "model_type": "transcription",
+                "type_label": MODEL_TYPES["transcription"],
+                "display_name": requirement.get("name", f"Whisper {model_name.title()}"),
+                "engine": requirement.get("engine", "openai-whisper"),
+                "enabled": True,
+                "available": True,
+                "is_default": model_name == "base",
+                "summary": requirement.get("summary", ""),
+                "request_settings": {
+                    "processing_mode": "offline",
+                    "model_name": model_name
+                }
+            })
+
+    for local_chat_type in ("chat", "notes"):
+        if model_type not in (None, local_chat_type):
+            continue
+
+        requirement = requirements.get("ollama-llama3", {})
+        local_models.append({
+            "source": "local",
+            "id": "ollama-llama3" if local_chat_type == "chat" else "ollama-llama3-notes",
+            "model_id": "llama3",
+            "model_type": local_chat_type,
+            "type_label": MODEL_TYPES[local_chat_type],
+            "display_name": requirement.get("name", "Llama 3 przez Ollama"),
+            "engine": requirement.get("engine", "ollama"),
+            "enabled": True,
+            "available": True,
+            "is_default": True,
+            "summary": requirement.get("summary", ""),
+            "request_settings": {
+                "processing_mode": "offline",
+                "chat_model": "llama3"
+            }
+        })
+
+    return local_models
+
+def build_cloud_model_list(model_type=None, include_disabled=False):
+    cloud_models = []
+    for model in list_ai_models(model_type=model_type, enabled_only=not include_disabled):
+        enabled = bool(model["enabled"])
+        has_api_key = bool(model["has_api_key"])
+        cloud_models.append({
+            "source": "cloud",
+            "id": model["id"],
+            "provider": model["provider"],
+            "provider_label": model["provider_label"],
+            "model_id": model["model_id"],
+            "model_type": model["model_type"],
+            "type_label": model["type_label"],
+            "display_name": model["display_name"],
+            "enabled": enabled,
+            "available": enabled and has_api_key,
+            "is_default": bool(model["is_default"]),
+            "request_settings": {
+                "processing_mode": "online",
+                "cloud_model_id": model["id"]
+            }
+        })
+
+    return cloud_models
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -653,10 +1140,16 @@ def init_db():
             filename TEXT NOT NULL,
             raw_text TEXT NOT NULL,
             ai_notes TEXT NOT NULL,
+            notes_model_used TEXT DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_email) REFERENCES users(email)
         )
     ''')
+    cursor.execute("PRAGMA table_info(history)")
+    history_columns = {row[1] for row in cursor.fetchall()}
+    if "notes_model_used" not in history_columns:
+        cursor.execute("ALTER TABLE history ADD COLUMN notes_model_used TEXT DEFAULT ''")
+
     # NOWA TABELA: Pamięć czatu (Prawdziwa rozmowa)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_history (
@@ -664,10 +1157,16 @@ def init_db():
             record_id INTEGER NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
+            model_used TEXT DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(record_id) REFERENCES history(id) ON DELETE CASCADE
         )
     ''')
+    cursor.execute("PRAGMA table_info(chat_history)")
+    chat_history_columns = {row[1] for row in cursor.fetchall()}
+    if "model_used" not in chat_history_columns:
+        cursor.execute("ALTER TABLE chat_history ADD COLUMN model_used TEXT DEFAULT ''")
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS ai_models (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -691,12 +1190,16 @@ def init_db():
 
 init_db()
 
-print("Ładowanie modeli Whisper...")
-models = {
-    "tiny": whisper.load_model("tiny"),
-    "base": whisper.load_model("base"),
-    "small": whisper.load_model("small")
-}
+if LOCAL_MODELS_ENABLED:
+    print("Ładowanie modeli Whisper...")
+    models = {
+        "tiny": whisper.load_model("tiny"),
+        "base": whisper.load_model("base"),
+        "small": whisper.load_model("small")
+    }
+else:
+    print("Pominięto ładowanie lokalnych modeli Whisper (--no-local-models).")
+    models = {}
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
@@ -792,11 +1295,28 @@ def test_page():
     cloud_models = list_ai_models(model_type="transcription", enabled_only=True)
     default_cloud_model = get_default_ai_model("transcription")
     default_cloud_model_id = default_cloud_model["id"] if default_cloud_model else None
+    default_notes_model = get_default_ai_model("notes")
+    openai_chat_models = list_available_openai_chat_models()
+    for model in openai_chat_models:
+        model["chat_label"] = describe_chat_answer_model(model)
+    default_chat_model = get_default_openai_chat_model()
+    initial_notes_model_label = (
+        describe_notes_model(default_notes_model, "online")
+        if not LOCAL_MODELS_ENABLED
+        else describe_local_notes_model()
+    )
     return render_template(
         'test-page.html',
         user=user_data,
         cloud_models=cloud_models,
-        default_cloud_model_id=default_cloud_model_id
+        default_cloud_model_id=default_cloud_model_id,
+        initial_notes_model_label=initial_notes_model_label,
+        default_cloud_notes_model_label=describe_notes_model(default_notes_model, "online"),
+        local_notes_model_label=describe_local_notes_model(),
+        openai_chat_models=openai_chat_models,
+        default_chat_model_id=default_chat_model["id"] if default_chat_model else None,
+        default_chat_model_label=describe_chat_answer_model(default_chat_model) if default_chat_model else "Brak dostępnego modelu OpenAI chat",
+        local_models_enabled=LOCAL_MODELS_ENABLED
     )
 
 @app.route('/settings', methods=['GET'])
@@ -836,6 +1356,7 @@ def add_model():
     model_id = request.form.get('model_id', '').strip()
     enabled = 1 if request.form.get('enabled') == 'on' else 0
     is_default = 1 if request.form.get('is_default') == 'on' else 0
+
     if not enabled:
         is_default = 0
 
@@ -877,6 +1398,27 @@ def update_model(model_pk):
     model_id = request.form.get('model_id', '').strip()
     enabled = 1 if request.form.get('enabled') == 'on' else 0
     is_default = 1 if request.form.get('is_default') == 'on' else 0
+
+    if display_name.lower() == "usun model":
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT provider, model_type, display_name, is_default FROM ai_models WHERE id = ?", (model_pk,))
+        model_row = cursor.fetchone()
+        if not model_row:
+            conn.close()
+            flash('Nie znaleziono modelu do usunięcia.', 'danger')
+            return redirect(url_for('settings'))
+
+        deleted_provider, deleted_model_type, deleted_display_name, was_default = model_row
+        cursor.execute("DELETE FROM ai_models WHERE id = ?", (model_pk,))
+        if was_default:
+            promote_first_enabled_model_as_default(cursor, deleted_provider, deleted_model_type)
+
+        conn.commit()
+        conn.close()
+        flash(f"Model '{deleted_display_name}' został usunięty.", 'success')
+        return redirect(url_for('settings'))
+
     if not enabled:
         is_default = 0
 
@@ -919,7 +1461,7 @@ def transcribe():
         return jsonify({"error": "Brak autoryzacji"}), 401
         
     youtube_url = request.form.get('youtube_url', '').strip()
-    processing_mode = request.form.get('processing_mode', 'offline')
+    processing_mode = request.form.get('processing_mode', get_default_processing_mode())
     model_name = request.form.get('model_name', 'base')
     cloud_model_id = request.form.get('cloud_model_id')
     language = request.form.get('language', 'auto')
@@ -928,16 +1470,13 @@ def transcribe():
     
     file_path = None
     display_title = ""
+    notes_model_used = ""
 
     try:
         if youtube_url:
-            download_token = uuid.uuid4().hex
-            ydl_opts = build_youtube_download_options(download_token)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(youtube_url, download=True)
-                video_title = info.get('title', 'YouTube Video')
-                file_path = resolve_youtube_download_path(ydl, info, download_token)
-                display_title = custom_name if custom_name else f"YT: {video_title}"
+            youtube_download = download_youtube_audio(youtube_url)
+            file_path = youtube_download["file_path"]
+            display_title = custom_name if custom_name else f"YT: {youtube_download['title']}"
         else:
             if 'file' not in request.files:
                 return jsonify({"error": "Brak pliku lub linku YouTube"}), 400
@@ -958,89 +1497,177 @@ def transcribe():
                 
             detected_lang = "Plik tekstowy"
             model_used_info = "Czysty tekst (Brak STT)"
+            notes_model_used = describe_notes_model(None, processing_mode)
             
-            prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (akcje do podjęcia).\n\nOto tekst:\n{surowy_tekst}"
             if processing_mode == 'online':
                 selected_transcription_model = get_selected_transcription_model(cloud_model_id)
                 preferred_provider = selected_transcription_model["provider"] if selected_transcription_model else None
-                chat_model = get_default_ai_model("chat", preferred_provider=preferred_provider)
-                notatki_ai = chat_with_cloud([{"role": "user", "content": prompt}], chat_model)
-                model_used_info = f"Plik tekstowy + {describe_cloud_model(chat_model)}"
+                notatki_ai, notes_model = generate_audio_notes(
+                    surowy_tekst,
+                    processing_mode,
+                    preferred_provider=preferred_provider
+                )
+                notes_model_used = describe_notes_model(notes_model, processing_mode)
+                model_used_info = f"Plik tekstowy + notatki: {describe_cloud_model(notes_model)}"
             else:
                 try:
+                    prompt = build_audio_notes_prompt(surowy_tekst)
                     response = ollama.chat(model='llama3', messages=[{'role': 'user', 'content': prompt}])
                     notatki_ai = response['message']['content']
                 except:
                     notatki_ai = "Nie udało się wygenerować notatek AI lokalnie. Upewnij się, że Ollama działa w tle."
         else:
             # Klasyczne przetwarzanie audio STT
-            if processing_mode == 'online':
-                transcription_model = get_selected_transcription_model(cloud_model_id)
-                if not transcription_model:
-                    return jsonify({"error": "Brak aktywnego modelu transkrypcji w ustawieniach"}), 400
+            transcription_result = process_audio_transcription(
+                file_path,
+                processing_mode=processing_mode,
+                model_name=model_name,
+                cloud_model_id=cloud_model_id,
+                language=language,
+                task=task
+            )
+            surowy_tekst = transcription_result["text"]
+            notatki_ai = transcription_result["notes"]
+            notes_model_used = transcription_result.get("notes_model_used", "")
+            detected_lang = transcription_result["language"]
+            task = transcription_result["task"]
+            model_used_info = transcription_result["model_used"]
 
-                surowy_tekst = transcribe_with_cloud(transcription_model, file_path, language)
-                    
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                
-                notatki_ai = ""
-                chat_model = None
-                if surowy_tekst.strip():
-                    prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst pochodzący z nagrania audio i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję nagrania).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje i wątki wypisane od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (zadania i akcje do podjęcia, jeśli o nich wspomniano).\n\nOto tekst do przeanalizowania:\n{surowy_tekst}"
-                    chat_model = get_default_ai_model("chat", preferred_provider=transcription_model["provider"])
-                    notatki_ai = chat_with_cloud([{"role": "user", "content": prompt}], chat_model)
-                    
-                detected_lang = language if language != "auto" else "auto"
-                model_used_info = f"{describe_cloud_model(transcription_model)} + {describe_cloud_model(chat_model)}"
-                
-            else:
-                if model_name not in models:
-                    return jsonify({"error": "Model not supported"}), 400
-                    
-                model = models[model_name]
-                options = {"task": task, "fp16": False}
-                if language != "auto":
-                    options["language"] = language
-                    
-                result = model.transcribe(file_path, **options)
-                surowy_tekst = result["text"]
-                
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                
-                notatki_ai = ""
-                if surowy_tekst.strip():
-                    prompt = f"Jesteś profesjonalnym asystentem biurowym. Przeczytaj uważnie poniższy tekst pochodzący z nagrania audio i przygotuj z niego czytelną, ustrukturyzowaną notatkę w języku polskim.\nNotatka MUSI składać się z trzech wyraźnych sekcji:\n1. KRÓTKIE PODSUMOWANIE (2-4 zdania wyjaśniające esencję nagrania).\n2. NAJWAŻNIEJSZE PUNKTY (kluczowe informacje i wątki wypisane od myślników).\n3. LISTA ZADAŃ DO WYKONANIA (zadania i akcje do podjęcia, jeśli o nich wspomniano).\n\nOto tekst do przeanalizowania:\n{surowy_tekst}"
-                    try:
-                        response = ollama.chat(model='llama3', messages=[{'role': 'user', 'content': prompt}])
-                        notatki_ai = response['message']['content']
-                    except Exception as ollama_err:
-                        notatki_ai = "Nie udało się wygenerować notatek AI. Upewnij się, że Ollama działa w tle."
-                        
-                detected_lang = result.get("language", language)
-                model_used_info = f"Lokalny Whisper ({model_name})"
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO history (user_email, filename, raw_text, ai_notes) VALUES (?, ?, ?, ?)",
-            (session['user_email'], display_title, surowy_tekst.strip(), notatki_ai.strip())
-        )
-        new_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        new_id = save_transcription_history(session['user_email'], display_title, surowy_tekst, notatki_ai, notes_model_used)
 
         return jsonify({
             "text": surowy_tekst, 
             "notes": notatki_ai,
+            "notes_model_used": notes_model_used,
             "model_used": model_used_info,
             "language": detected_lang,
             "task": task,
             "saved_name": display_title,
             "record_id": new_id
         })
-        
+
+    except ValueError as e:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/models', methods=['GET'])
+def api_models():
+    model_type = (request.args.get("type") or request.args.get("model_type") or "").strip().lower() or None
+    if model_type and model_type not in MODEL_TYPES:
+        allowed_types = "', '".join(MODEL_TYPES.keys())
+        return jsonify({"error": f"Nieobsługiwany typ modelu. Użyj jednego z: '{allowed_types}'."}), 400
+
+    include_disabled = parse_bool_setting(request.args.get("include_disabled"), default=False)
+
+    local_models = build_local_model_list(model_type=model_type)
+    cloud_models = build_cloud_model_list(model_type=model_type, include_disabled=include_disabled)
+
+    return jsonify({
+        "local": local_models,
+        "cloud": cloud_models,
+        "models": local_models + cloud_models,
+        "filters": {
+            "type": model_type,
+            "include_disabled": include_disabled
+        },
+        "counts": {
+            "local": len(local_models),
+            "cloud": len(cloud_models),
+            "total": len(local_models) + len(cloud_models)
+        }
+    })
+
+@app.route('/api/youtube/transcribe', methods=['POST'])
+def api_youtube_transcribe():
+    if 'user_email' not in session:
+        return jsonify({"error": "Brak autoryzacji"}), 401
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Oczekiwano danych JSON"}), 400
+
+    settings = payload.get("settings") or {}
+    if not isinstance(settings, dict):
+        return jsonify({"error": "Pole settings musi być obiektem JSON"}), 400
+
+    yt_url_value = (
+        payload.get("yt_url")
+        or payload.get("youtube_url")
+        or settings.get("yt_url")
+        or settings.get("youtube_url")
+        or ""
+    )
+    yt_url = str(yt_url_value).strip()
+    if not yt_url:
+        return jsonify({"error": "Brak wymaganego pola yt_url"}), 400
+
+    processing_mode = get_payload_setting(payload, settings, "processing_mode", get_default_processing_mode())
+    model_name = get_payload_setting(payload, settings, "model_name", "base")
+    cloud_model_id = get_payload_setting(payload, settings, "cloud_model_id")
+    language = get_payload_setting(payload, settings, "language", "auto")
+    task = get_payload_setting(payload, settings, "task", "transcribe")
+    custom_name = str(get_payload_setting(payload, settings, "custom_name", "") or "").strip()
+    save_to_history = parse_bool_setting(get_payload_setting(payload, settings, "save_to_history"), default=False)
+
+    file_path = None
+
+    try:
+        youtube_download = download_youtube_audio(yt_url)
+        file_path = youtube_download["file_path"]
+        transcription_result = process_audio_transcription(
+            file_path,
+            processing_mode=processing_mode,
+            model_name=model_name,
+            cloud_model_id=cloud_model_id,
+            language=language,
+            task=task
+        )
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+        saved_name = custom_name if custom_name else f"YT: {youtube_download['title']}"
+        record_id = None
+        if save_to_history:
+            record_id = save_transcription_history(
+                session['user_email'],
+                saved_name,
+                transcription_result["text"],
+                transcription_result["notes"],
+                transcription_result.get("notes_model_used", "")
+            )
+
+        return jsonify({
+            "text": transcription_result["text"],
+            "summary": transcription_result["notes"],
+            "notes": transcription_result["notes"],
+            "language": transcription_result["language"],
+            "model_used": transcription_result["model_used"],
+            "notes_model_used": transcription_result.get("notes_model_used", ""),
+            "task": transcription_result["task"],
+            "saved": record_id is not None,
+            "saved_name": saved_name,
+            "record_id": record_id,
+            "youtube": {
+                "id": youtube_download["id"],
+                "title": youtube_download["title"],
+                "duration": youtube_download["duration"],
+                "url": youtube_download["webpage_url"]
+            }
+        })
+
+    except ValueError as e:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
@@ -1048,28 +1675,62 @@ def transcribe():
 
 @app.route('/ask-question', methods=['POST'])
 def ask_question():
-    if 'user_email' not in session:
+    user_email = session.get('user_email')
+    if not user_email:
+        app.logger.warning("ask-question: unauthorized request from %s", request.remote_addr)
         return jsonify({"error": "Brak autoryzacji"}), 401
         
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        app.logger.warning(
+            "ask-question: invalid json body user=%s body_type=%s",
+            user_email,
+            type(data).__name__
+        )
+        return jsonify({"error": "Nieprawidłowy JSON"}), 400
+
     record_id = data.get('id')
-    question = data.get('question', '').strip()
+    question = str(data.get('question') or '').strip()
+    app.logger.info(
+        "ask-question: received user=%s record_id=%s question_len=%s payload_keys=%s",
+        user_email,
+        record_id,
+        len(question),
+        list(data.keys())
+    )
     
     if not record_id or not question:
+        app.logger.warning(
+            "ask-question: invalid payload user=%s record_id=%s question_len=%s",
+            user_email,
+            record_id,
+            len(question)
+        )
         return jsonify({"error": "Brak ID nagrania lub pytania"}), 400
         
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
     # 1. Sprawdzenie uprawnień i pobranie tekstu źródłowego
-    cursor.execute("SELECT raw_text FROM history WHERE id = ? AND user_email = ?", (record_id, session['user_email']))
+    cursor.execute("SELECT raw_text FROM history WHERE id = ? AND user_email = ?", (record_id, user_email))
     row = cursor.fetchone()
     
     if not row:
         conn.close()
+        app.logger.warning(
+            "ask-question: record not found user=%s record_id=%s",
+            user_email,
+            record_id
+        )
         return jsonify({"error": "Nie znaleziono nagrania w Twojej historii"}), 404
         
     transkrypcja = row[0]
+    app.logger.info(
+        "ask-question: record loaded user=%s record_id=%s transcript_len=%s",
+        user_email,
+        record_id,
+        len(transkrypcja or "")
+    )
     
     # 2. Pobranie historii czatu (ostatnie 6 wiadomości chronologicznie)
     cursor.execute(
@@ -1078,35 +1739,58 @@ def ask_question():
     )
     context_rows = cursor.fetchall()
     conn.close()
+    app.logger.info(
+        "ask-question: context loaded record_id=%s context_count=%s",
+        record_id,
+        len(context_rows)
+    )
     
-    # 3. Budowanie kontekstu konwersacji
-    messages = [
-        {
-            "role": "system",
-            "content": f"Jesteś inteligentnym asystentem. Odpowiadasz na pytania użytkownika, opierając się wyłącznie na podanym poniżej tekście transkrypcji. Prowadź naturalną dyskusję, pamiętając poprzedni kontekst rozmowy.\n\nTekst transkrypcji:\n{transkrypcja}"
-        }
-    ]
-    
-    for role, content in context_rows:
-        messages.append({"role": role, "content": content})
-        
-    messages.append({"role": "user", "content": question})
-
     try:
-        # 4. Zapytanie do domyślnego modelu czatu z ustawień
+        # 4. Zapytanie do niezależnego modelu czatu. OpenAI używa Responses API z web_search.
+        yt_response_prompt = build_web_search_question_prompt(transkrypcja, context_rows, question)
         chat_model = get_default_ai_model("chat")
-        odpowiedz_ai = chat_with_cloud(messages, chat_model)
+        app.logger.info(
+            "ask-question: ai request start record_id=%s provider=%s model=%s prompt_len=%s",
+            record_id,
+            chat_model.get("provider") if chat_model else None,
+            chat_model.get("model_id") if chat_model else None,
+            len(yt_response_prompt)
+        )
+        ai_answer = answer_question_with_ai(yt_response_prompt, chat_model)
+        odpowiedz_ai = ai_answer["text"]
+        app.logger.info(
+            "ask-question: ai request ok record_id=%s model=%s answer_len=%s sources_count=%s",
+            record_id,
+            ai_answer.get("model"),
+            len(odpowiedz_ai or ""),
+            len(ai_answer.get("sources", []))
+        )
         
         # 5. Zapisanie aktualnego pytania oraz odpowiedzi do bazy (pamięć trwała)
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO chat_history (record_id, role, content) VALUES (?, ?, ?)", (record_id, 'user', question))
-        cursor.execute("INSERT INTO chat_history (record_id, role, content) VALUES (?, ?, ?)", (record_id, 'assistant', odpowiedz_ai))
+        cursor.execute(
+            "INSERT INTO chat_history (record_id, role, content, model_used) VALUES (?, ?, ?, ?)",
+            (record_id, 'assistant', odpowiedz_ai, ai_answer["engine"])
+        )
         conn.commit()
         conn.close()
+        app.logger.info("ask-question: saved chat history record_id=%s", record_id)
         
-        return jsonify({"answer": odpowiedz_ai})
+        return jsonify({
+            "answer": odpowiedz_ai,
+            "engine": ai_answer["engine"],
+            "chat_model_used": ai_answer["engine"],
+            "sources": ai_answer["sources"]
+        })
     except Exception as e:
+        app.logger.exception(
+            "ask-question: error user=%s record_id=%s question_len=%s",
+            user_email,
+            record_id,
+            len(question)
+        )
         return jsonify({"error": f"Błąd AI: {str(e)}"}), 500
 
 @app.route('/get-history', methods=['GET'])
@@ -1117,20 +1801,49 @@ def get_history():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, filename, raw_text, ai_notes, datetime(created_at, 'localtime') FROM history WHERE user_email = ? ORDER BY created_at DESC", 
+        """
+        SELECT id, filename, raw_text, ai_notes, COALESCE(notes_model_used, ''), datetime(created_at, 'localtime')
+        FROM history
+        WHERE user_email = ?
+        ORDER BY created_at DESC
+        """,
         (session['user_email'],)
     )
     rows = cursor.fetchall()
+    cursor.execute(
+        """
+        SELECT ch.record_id, ch.role, ch.content, datetime(ch.created_at, 'localtime'), COALESCE(ch.model_used, '')
+        FROM chat_history ch
+        JOIN history h ON h.id = ch.record_id
+        WHERE h.user_email = ?
+        ORDER BY ch.id ASC
+        """,
+        (session['user_email'],)
+    )
+    chat_rows = cursor.fetchall()
     conn.close()
+
+    chat_by_record = {}
+    for record_id, role, content, created_at, model_used in chat_rows:
+        chat_by_record.setdefault(record_id, []).append({
+            "role": role,
+            "content": content,
+            "created_at": created_at,
+            "engine": model_used
+        })
     
     history_list = []
     for r in rows:
+        chat_messages = chat_by_record.get(r[0], [])
         history_list.append({
             "id": r[0],
             "filename": r[1],
             "raw_text": r[2],
             "ai_notes": r[3],
-            "created_at": r[4]
+            "notes_model_used": r[4],
+            "created_at": r[5],
+            "chat_messages": chat_messages,
+            "chat_count": len(chat_messages)
         })
     return jsonify(history_list)
 
@@ -1212,13 +1925,23 @@ def export_pdf():
     pdf.setFont(font_regular, 10)
     y = 710
     for line in content.split('\n'):
+        clean_line = line.encode('utf-8', errors='ignore').decode('utf-8')
+        wrapped_lines = simpleSplit(clean_line, font_regular, 10, 500) or [""]
+        for wrapped_line in wrapped_lines:
+            if y < 50:
+                pdf.showPage()
+                y = 750
+                pdf.setFont(font_regular, 10)
+            pdf.drawString(50, y, wrapped_line)
+            y -= 15
+
+        if not clean_line.strip():
+            y -= 5
+
         if y < 50:
             pdf.showPage()
             y = 750
             pdf.setFont(font_regular, 10)
-        clean_line = line.encode('utf-8', errors='ignore').decode('utf-8')
-        pdf.drawString(50, y, clean_line)
-        y -= 15
         
     pdf.save()
     file_stream.seek(0)

@@ -69,6 +69,9 @@ pip install -r requirements.txt
 ```env
 GROQ_API_KEY=twoj_klucz_groq
 OPENAI_API_KEY=twoj_klucz_openai
+OPENAI_MODEL=gpt-5
+# opcjonalnie osobny model dla formularza "Zapytaj AI" z web_search
+OPENAI_WEB_SEARCH_MODEL=gpt-5
 ```
 
 **3. Konfiguracja modeli AI (Ollama)
@@ -83,6 +86,44 @@ Odpal serwer deweloperski Flaska:
 python app.py
 ```
 Aplikacja domyślnie zacznie działać lokalnie na porcie 8000 (http://127.0.0.1:8000). Jeśli port 8000 jest zajęty, serwer automatycznie wybierze kolejny wolny port.
+
+Jeśli chcesz uruchomić aplikację bez ładowania lokalnych modeli Whisper, użyj:
+
+```bash
+python app.py --no-local-models
+```
+
+W tym trybie aplikacja działa w trybie chmurowym, a lokalne modele `tiny`, `base` i `small` nie są ładowane przy starcie.
+
+### **Endpoint API dla YouTube**
+
+Endpoint wymaga aktywnej sesji zalogowanego użytkownika i przyjmuje JSON:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/youtube/transcribe \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "yt_url": "https://www.youtube.com/watch?v=...",
+    "settings": {
+      "processing_mode": "offline",
+      "model_name": "base",
+      "language": "auto",
+      "task": "transcribe",
+      "save_to_history": false
+    }
+  }'
+```
+
+Odpowiedź zawiera m.in. pola `text`, `summary`, `language`, `model_used` oraz metadane filmu w polu `youtube`.
+
+Lista modeli dostępnych w aplikacji:
+
+```bash
+curl http://127.0.0.1:8000/api/models
+```
+
+Endpoint zwraca osobno tablice `local` i `cloud` oraz wspólną tablicę `models`. Obsługuje filtry `?type=transcription`, `?type=chat` oraz `?include_disabled=true`.
 
  Przykładowy Scenariusz Testowy
 Aby przetestować pełne możliwości systemu, zaloguj się, kliknij przycisk nagrywania i przeczytaj na głos poniższy tekst:
