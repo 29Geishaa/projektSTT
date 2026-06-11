@@ -116,7 +116,7 @@ MODEL_CATALOG = {
     },
     "openai": {
         "transcription": [
-            {"id": "whisper-1", "label": "Whisper 1"},
+            {"id": "whisper-1", "label": "STT Whisper 1"},
             {"id": "gpt-4o-mini-transcribe", "label": "GPT-4o mini transcribe"},
             {"id": "gpt-4o-transcribe", "label": "GPT-4o transcribe"},
             {"id": "gpt-4o-transcribe-diarize", "label": "GPT-4o transcribe diarize"}
@@ -278,7 +278,7 @@ DEFAULT_AI_MODELS = [
     {
         "provider": "openai",
         "model_type": "transcription",
-        "display_name": "Whisper-1 API",
+        "display_name": "Whisper-1 API - STT",
         "model_id": "whisper-1",
         "is_default": 1
     },
